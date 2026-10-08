@@ -38,7 +38,7 @@ W zakładce „Kontrola projektu” są wymienione przęsła dłuższe niż 55 m
 ### Arkusze 1:1000 (w pliku `*_numeracja.dxf`)
 
 - Układy papieru „1”, „2”, „3”… są tworzone z szablonu `szablony/arkusze_wt.dxf` (układ „a (2)”; tabelka jako zwykłe linie i teksty, pola wyszukiwane po etykietach): format A3, kierunek N-S, bez obrotu, skala 1:1000.
-- Arkusze są układane wzdłuż trasy tak, żeby było ich jak najmniej. Sąsiednie arkusze mają zakładkę 50 m. Trasa nie wchodzi pod tabelkę i legendę w prawym dolnym rogu.
+- Arkusze są układane wzdłuż trasy tak, żeby było ich jak najmniej. Sąsiednie arkusze mają zakładkę 10 m trasy (zmienisz ją w oknie: „Zakładka arkuszy”). Trasa nie wchodzi pod tabelkę i legendę w prawym dolnym rogu.
 - Każdy arkusz ma rzutnię papieru i ustawienia strony A3. Wszystkie teksty mają styl Arial (`WT_Arial`).
 - W tabelce program uzupełnia: inwestora (wybrany operator), opracował, datę, numer rysunku, skalę, miejscowości widoczne na arkuszu.
 - Obrysy arkuszy z numerami są w modelu na niedrukowalnej warstwie `WT_arkusze`.

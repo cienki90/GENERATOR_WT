@@ -59,7 +59,7 @@ class Config:
     uklad_trasy: str = "a (2)"            # układ szablonu dla arkuszy trasy
     uklad_orientacji: str = "ORIENTACJA"  # układ szablonu dla planu orientacyjnego
     skala_arkuszy: int = 1000
-    zakladka: float = 50.0                # zakładka arkuszy wzdłuż trasy [m]
+    zakladka: float = 10.0                # zakładka arkuszy wzdłuż trasy [m]
     margines_mm: float = 10.0             # odstęp trasy od ramki i tabelki [mm papieru]
     margines_orientacji_mm: float = 5.0
     warstwa_obrysow: str = "WT_arkusze"   # obrysy arkuszy w modelu (niedrukowalna)
