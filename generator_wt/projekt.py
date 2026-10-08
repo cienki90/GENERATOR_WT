@@ -10,6 +10,7 @@ Kolejność pracy:
 """
 from __future__ import annotations
 
+import math
 from pathlib import Path
 
 from ezdxf.document import Drawing
@@ -83,6 +84,20 @@ class Projekt:
             rodzaj = "strefa trafo" if g.stacja else "miejscowość"
             wynik.append(f"{g.nazwa} [{rodzaj}]: {len(nry)} słupów, {p}{nry[0]}–{p}{nry[-1]}")
         return wynik
+
+    def przesla(self, prog: float | None = None) -> list[tuple[float, Wierzcholek, Wierzcholek]]:
+        """Odległości między połączonymi linią słupami, dłuższe niż próg (malejąco)."""
+        prog = self.cfg.przeslo_ostrzezenie if prog is None else prog
+        wynik = []
+        for a in self.slupy:
+            for i in a.sasiedzi:
+                b = self.slupy[i]
+                if a.id < b.id:
+                    d = math.hypot(a.x - b.x, a.y - b.y)
+                    if d > prog:
+                        para = sorted((a, b), key=lambda w: w.nr or 0)
+                        wynik.append((d, para[0], para[1]))
+        return sorted(wynik, key=lambda t: -t[0])
 
     def istniejaca_numeracja(self) -> int:
         return dxf_writer.istniejaca_numeracja(self.doc, self.cfg) if self.doc else 0

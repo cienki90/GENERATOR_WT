@@ -397,7 +397,7 @@ class OknoGlowne(QMainWindow):
         self._wypelnij_kontrole()
         self.log(f"Analiza zakończona: {len(p.slupy)} słupów, {len(p.bledne_kliki)} "
                  f"błędnych klików, {len(p.ostrzezenia)} ostrzeżeń.")
-        if p.bledne_kliki or p.ostrzezenia:
+        if p.bledne_kliki or p.ostrzezenia or p.przesla():
             self.zakladki.setCurrentWidget(self.drzewo)
         self._stan_przyciskow()
 
@@ -473,6 +473,25 @@ class OknoGlowne(QMainWindow):
                                  f"{b.liczba} wierzchołki, rozrzut {b.max_odleglosc:.2f} m · "
                                  f"X={b.y:.2f} Y={b.x:.2f}"])
 
+        dlugie = p.przesla()
+        bledne = sum(1 for d, _, _ in dlugie if d > self.cfg.przeslo_blad)
+        pr = QTreeWidgetItem([f"Przęsła > {self.cfg.przeslo_ostrzezenie:g} m",
+                              f"{len(dlugie)}, w tym {bledne} > {self.cfg.przeslo_blad:g} m"])
+        pr.setIcon(0, ikona(QStyle.SP_MessageBoxCritical if bledne else
+                            QStyle.SP_MessageBoxWarning if dlugie else QStyle.SP_DialogApplyButton))
+        czerwony, pomaranczowy = QColor("#c62828"), QColor("#b35c00")
+        for d, a, b in dlugie:
+            it = QTreeWidgetItem(pr, [f"Słupy {a.etykieta} – {b.etykieta}", f"{d:.2f} m"])
+            kolor = czerwony if d > self.cfg.przeslo_blad else pomaranczowy
+            for k in (0, 1):
+                it.setForeground(k, kolor)
+                if d > self.cfg.przeslo_blad:
+                    f = it.font(k)
+                    f.setBold(True)
+                    it.setFont(k, f)
+        if bledne:
+            pr.setForeground(1, czerwony)
+
         st = QTreeWidgetItem(["Stacje trafo", f"{len(p.stacje)}"])
         st.setIcon(0, ikona(QStyle.SP_DriveNetIcon))
         for s in p.stacje:
@@ -494,9 +513,10 @@ class OknoGlowne(QMainWindow):
             o.setIcon(0, ikona(QStyle.SP_MessageBoxWarning))
             for t in p.ostrzezenia:
                 QTreeWidgetItem(o, ["", t])
-        self.drzewo.addTopLevelItems([plan, bk, st, op] + ([o] if p.ostrzezenia else []))
+        self.drzewo.addTopLevelItems([plan, bk, pr, st, op] + ([o] if p.ostrzezenia else []))
         plan.setExpanded(True)
         bk.setExpanded(True)
+        pr.setExpanded(True)
 
     # ================================================================ generowanie
     def generuj(self):

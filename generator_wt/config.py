@@ -34,6 +34,10 @@ class Config:
     # Odnośnik po stronie z dala od linii (True) albo zawsze w prawo-górę (False)
     inteligentny_kierunek: bool = True
 
+    # Raport długich przęseł [m]: pokazywane powyżej progu, na czerwono powyżej progu błędu
+    przeslo_ostrzezenie: float = 55.0
+    przeslo_blad: float = 60.0
+
     # Wierzchołki bliżej niż ta odległość [m] = jeden słup (błędny klik)
     tolerancja_slupa: float = 5.0
 

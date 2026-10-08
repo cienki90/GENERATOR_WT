@@ -69,6 +69,13 @@ def main(argv=None) -> int:
     if bez:
         print(f"Gminy spoza listy (rejon domyślny {rejon and rejon['Nazwa']}): {', '.join(bez)}")
 
+    dlugie = p.przesla()
+    if dlugie:
+        print(f"\nPrzęsła dłuższe niż {cfg.przeslo_ostrzezenie:g} m: {len(dlugie)}")
+        for d, a, b in dlugie:
+            znak = "!!" if d > cfg.przeslo_blad else "  "
+            print(f"  {znak} {a.etykieta}–{b.etykieta}: {d:.2f} m")
+
     print("\nPlan numeracji:")
     for x in p.opis_planu():
         print("  -", x)
