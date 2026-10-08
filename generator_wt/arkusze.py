@@ -146,118 +146,165 @@ def _obszar_uzytkowy(W, H, zakazane, margines):
     return pole.difference(rog)
 
 
-def rozmiesc(linie: list[LineString], W: float, H: float, zakazane, margines: float,
-             zakladka: float, krok: float = 15.0, gestosc: float = 2.0
-             ) -> list[tuple[float, float]]:
-    """Zwraca lewe dolne narożniki arkuszy (w układzie modelu) pokrywających linie.
-
-    W, H, zakazane, margines, zakladka - w metrach terenu.
-    Punkt trasy jest 'pokryty' przez arkusz, gdy leży w obszarze użytkowym (ramka
-    pomniejszona o margines, bez rogu z tabelką i legendą) i jest dalej niż
-    'zakladka' (wzdłuż trasy) od miejsca, w którym trasa wychodzi z arkusza.
-    Dzięki temu sąsiednie arkusze nachodzą na siebie o co najmniej 'zakladka'.
-
-    Metoda: kandydaci na siatce co 'krok' -> zachłanne pokrycie zbioru ->
-    usunięcie arkuszy zbędnych -> numeracja wzdłuż trasy.
-    """
-    uzyt = _obszar_uzytkowy(W, H, zakazane, margines)
-    shapely.prepare(uzyt)
-
-    pts, nr_linii, t_linii = [], [], []
+def _probkuj(linie, gestosc):
+    P, ch, T = [], [], []
     for i, ls in enumerate(linie):
         n = max(2, int(math.ceil(ls.length / gestosc)) + 1)
         for t in np.linspace(0, ls.length, n):
-            p = ls.interpolate(t)
-            pts.append((p.x, p.y))
-            nr_linii.append(i)
-            t_linii.append(t)
-    if not pts:
-        return []
-    P = np.array(pts)
-    nr_linii = np.array(nr_linii)
-    t_linii = np.array(t_linii)
-    zakresy = {}
-    for i in range(len(linie)):
-        idx = np.nonzero(nr_linii == i)[0]
-        zakresy[i] = (idx[0], idx[-1] + 1)
+            q = ls.interpolate(t)
+            P.append((q.x, q.y))
+            ch.append(i)
+            T.append(t)
+    return np.array(P), np.array(ch), np.array(T)
 
-    def pokrycie(x0: float, y0: float) -> np.ndarray:
-        obszar = affinity.translate(uzyt, x0, y0)
-        granica = obszar.boundary
-        wyn = np.zeros(len(P), bool)
-        ramka = box(x0, y0, x0 + W, y0 + H)
-        for i, ls in enumerate(linie):
-            if not ls.intersects(ramka):
-                continue
-            czesc = ls.intersection(obszar)
-            if czesc.is_empty:
-                continue
-            i0, i1 = zakresy[i]
-            t = t_linii[i0:i1]
-            for k in getattr(czesc, "geoms", [czesc]):
-                if k.geom_type != "LineString" or k.length == 0:
-                    continue
-                a, b = ls.project(Point(k.coords[0])), ls.project(Point(k.coords[-1]))
-                if a > b:
-                    a, b = b, a
-                if a > 0.01 and granica.distance(ls.interpolate(a)) < 0.5:
-                    a += zakladka
-                if b < ls.length - 0.01 and granica.distance(ls.interpolate(b)) < 0.5:
-                    b -= zakladka
-                if b >= a:
-                    wyn[i0:i1] |= (t >= a - 1e-6) & (t <= b + 1e-6)
-        return wyn
 
-    # --- kandydaci na siatce (tylko te, które zawierają jakąś część trasy)
-    xmin, ymin = P.min(axis=0)
-    xmax, ymax = P.max(axis=0)
-    kand_xy, kand_pk = [], []
-    for x0 in np.arange(xmin - W + margines, xmax - margines + krok, krok):
-        for y0 in np.arange(ymin - H + margines, ymax - margines + krok, krok):
-            w_ramce = ((P[:, 0] > x0) & (P[:, 0] < x0 + W) & (P[:, 1] > y0) & (P[:, 1] < y0 + H))
-            if not w_ramce.any():
-                continue
-            pk = pokrycie(x0, y0)
-            if pk.any():
-                kand_xy.append((x0, y0))
-                kand_pk.append(pk)
-    if not kand_pk:
-        return []
-    M = np.array(kand_pk)
+def _wybierz_ilp(M: np.ndarray, log=None) -> list[int] | None:
+    """Minimalna liczba arkuszy (pokrycie zbioru), a wśród takich rozwiązań -
+    najmniejsze dublowanie (suma pokrytych punktów). Wymaga scipy (HiGHS)."""
+    try:
+        from scipy.optimize import Bounds, LinearConstraint, milp
+        from scipy.sparse import csr_matrix
+    except ImportError:
+        return None
+    A = np.unique(M.T.astype(np.int8), axis=0)
+    n = M.shape[0]
+    pokrycie = LinearConstraint(csr_matrix(A), lb=1, ub=np.inf)
+    opcje = {"time_limit": 60}
+    r1 = milp(c=np.ones(n), constraints=[pokrycie], integrality=np.ones(n),
+              bounds=Bounds(0, 1), options=opcje)
+    if r1.x is None:
+        return None
+    k = int(round(r1.x.sum()))
+    # etap 2: tyle samo arkuszy, jak najmniej wspólnych fragmentów trasy
+    liczba = LinearConstraint(np.ones((1, n)), lb=k, ub=k)
+    koszt = M.sum(axis=1).astype(float)
+    r2 = milp(c=koszt, constraints=[pokrycie, liczba], integrality=np.ones(n),
+              bounds=Bounds(0, 1), options=opcje)
+    x = r2.x if r2.x is not None else r1.x
+    return [int(j) for j in np.nonzero(x > 0.5)[0]]
 
-    # --- zachłanne pokrycie zbioru
-    pokryte = np.zeros(len(P), bool)
+
+def _wybierz_zachlannie(M: np.ndarray) -> list[int]:
+    pokryte = np.zeros(M.shape[1], bool)
     wybrane: list[int] = []
     while not pokryte.all():
         zysk = (M & ~pokryte).sum(axis=1)
         j = int(np.argmax(zysk))
-        if zysk[j] == 0:  # punkty niemożliwe do pokrycia z zakładką - bierz arkusz z punktem
-            s = int(np.argmax(~pokryte))
-            sx, sy = P[s]
-            x0, y0 = sx - W / 2, sy - H / 2
-            kand_xy.append((x0, y0))
-            pk = shapely.contains_xy(affinity.translate(uzyt, x0, y0), P[:, 0], P[:, 1])
-            pk[s] = True
-            M = np.vstack([M, pk])
-            j = len(kand_xy) - 1
+        if zysk[j] == 0:
+            break
         wybrane.append(j)
         pokryte |= M[j]
-
-    # --- usunięcie arkuszy zbędnych (od najmniej wnoszących)
     zmiana = True
     while zmiana and len(wybrane) > 1:
         zmiana = False
         for j in sorted(wybrane, key=lambda j: M[j].sum()):
             inne = [k for k in wybrane if k != j]
             if M[inne].any(axis=0).all():
-                wybrane = inne
-                zmiana = True
+                wybrane, zmiana = inne, True
                 break
+    return wybrane
 
-    # --- kolejność wzdłuż trasy (wg pierwszego pokrytego punktu)
-    wybrane.sort(key=lambda j: int(np.argmax(M[j])))
-    return [kand_xy[j] for j in wybrane]
 
+def rozmiesc(linie: list[LineString], W: float, H: float, zakazane, margines: float,
+             zakladka: float, krok: float = 15.0, gestosc: float = 5.0
+             ) -> list[tuple[float, float]]:
+    """Zwraca lewe dolne narożniki arkuszy (w układzie modelu) pokrywających linie.
+
+    W, H, zakazane, margines, zakladka - w metrach terenu.
+
+    Punkt trasy jest 'pokryty' przez arkusz, gdy leży w obszarze użytkowym (ramka
+    pomniejszona o margines, bez rogu z tabelką i legendą) i jest dalej niż
+    'zakladka' (wzdłuż trasy) od miejsca, w którym trasa wychodzi z arkusza -
+    dzięki temu sąsiednie arkusze mają wspólny odcinek trasy ok. 'zakladka'.
+
+    1. kandydaci na siatce co 'krok',
+    2. minimalna liczba arkuszy (programowanie całkowitoliczbowe; bez scipy - zachłannie),
+       a spośród takich rozwiązań - najmniejsze dublowanie trasy,
+    3. centrowanie: każdy arkusz przesuwany tak, by jego odcinek trasy był
+       możliwie na środku obszaru użytkowego,
+    4. numeracja arkuszy wzdłuż trasy.
+    """
+    uzyt = _obszar_uzytkowy(W, H, zakazane, margines)
+    shapely.prepare(uzyt)
+    sx, sy = uzyt.centroid.x, uzyt.centroid.y
+    P, ch, T = _probkuj(linie, gestosc)
+    if not len(P):
+        return []
+
+    def pokrycie(x0: float, y0: float) -> np.ndarray:
+        wew = shapely.contains_xy(uzyt, P[:, 0] - x0, P[:, 1] - y0)
+        if not wew.any() or zakladka <= 0:
+            return wew
+        wyn = wew.copy()
+        # wyjścia trasy z arkusza: sąsiednie punkty łańcucha po różnych stronach granicy
+        for k in np.nonzero((wew[:-1] != wew[1:]) & (ch[:-1] == ch[1:]))[0]:
+            tg = (T[k] + T[k + 1]) / 2
+            wyn &= ~((ch == ch[k]) & (np.abs(T - tg) < zakladka))
+        return wyn
+
+    # --- 1. kandydaci
+    xmin, ymin = P.min(axis=0)
+    xmax, ymax = P.max(axis=0)
+    XY, kol = [], []
+    for x0 in np.arange(xmin - W + margines, xmax - margines + krok, krok):
+        for y0 in np.arange(ymin - H + margines, ymax - margines + krok, krok):
+            r = pokrycie(x0, y0)
+            if r.any():
+                XY.append((float(x0), float(y0)))
+                kol.append(r)
+    M = np.array(kol)
+    # punkty, których nie da się pokryć z zakładką (krótkie odcinki przy granicy):
+    # dodaj arkusz wyśrodkowany na takim punkcie i nie wymagaj zakładki
+    brak = ~M.any(axis=0)
+    while brak.any():
+        i = int(np.argmax(brak))
+        x0, y0 = P[i, 0] - sx, P[i, 1] - sy
+        r = shapely.contains_xy(uzyt, P[:, 0] - x0, P[:, 1] - y0)
+        r[i] = True
+        XY.append((x0, y0))
+        M = np.vstack([M, r])
+        brak &= ~r
+
+    # --- 2. wybór arkuszy
+    wybrane = _wybierz_ilp(M) or _wybierz_zachlannie(M)
+    ark = [XY[j] for j in wybrane]
+    pk = [M[j] for j in wybrane]
+
+    # --- 3. centrowanie (2 przebiegi)
+    for _ in range(2):
+        # punkt należy do arkusza, w którym leży najgłębiej (najdalej od krawędzi)
+        glebokosc = np.full((len(ark), len(P)), -np.inf)
+        for a, ((x0, y0), m) in enumerate(zip(ark, pk)):
+            idx = np.nonzero(m)[0]
+            if len(idx):
+                pts = shapely.points(P[idx, 0] - x0, P[idx, 1] - y0)
+                glebokosc[a, idx] = shapely.distance(uzyt.boundary, pts)
+        wlasciciel = np.argmax(glebokosc, axis=0)
+        for a in range(len(ark)):
+            moje = np.nonzero(wlasciciel == a)[0]
+            if not len(moje):
+                continue
+            # środek odcinka trasy tego arkusza -> środek obszaru użytkowego
+            cx = (P[moje, 0].min() + P[moje, 0].max()) / 2
+            cy = (P[moje, 1].min() + P[moje, 1].max()) / 2
+            cel = (cx - sx, cy - sy)
+            x0, y0 = ark[a]
+            prop = []
+            for dx in np.arange(-W / 2, W / 2 + 1e-9, 5.0):
+                for dy in np.arange(-H / 2, H / 2 + 1e-9, 5.0):
+                    nx, ny = x0 + dx, y0 + dy
+                    if shapely.contains_xy(uzyt, P[moje, 0] - nx, P[moje, 1] - ny).all():
+                        prop.append((math.hypot(nx - cel[0], ny - cel[1]), nx, ny))
+            prop.sort()
+            for _, nx, ny in prop[:60]:
+                r = pokrycie(nx, ny)
+                if r[moje].all():
+                    ark[a], pk[a] = (nx, ny), r
+                    break
+
+    # --- 4. kolejność wzdłuż trasy
+    kolej = sorted(range(len(ark)), key=lambda a: int(np.argmax(pk[a])) if pk[a].any() else 0)
+    return [ark[a] for a in kolej]
 
 
 # ====================================================================== tabelka

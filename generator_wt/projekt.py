@@ -182,7 +182,7 @@ class Projekt:
                  for c in [list(a.prostokat.exterior.coords)] for i in range(4)]
         linie += ark.lancuchy_trasy(self.slupy)
         polozenia = ark.rozmiesc(linie, W, H, zak, self.cfg.margines_orientacji_mm * k,
-                                 zakladka=0.0, krok=max(20.0, W / 80), gestosc=max(2.0, k))
+                                 zakladka=0.0, krok=max(20.0, W / 80), gestosc=max(5.0, k))
         litery = string.ascii_uppercase
         orient = []
         for i, (x0, y0) in enumerate(polozenia):

@@ -8,7 +8,8 @@ import traceback
 from pathlib import Path
 
 from PySide6.QtCore import QDate, QObject, QSettings, Qt, QThread, Signal
-from PySide6.QtGui import QColor, QFont
+from PySide6.QtCore import QPointF, QRectF
+from PySide6.QtGui import QBrush, QColor, QFont, QPainter, QPen
 from PySide6.QtWidgets import (
     QAbstractItemView, QApplication, QCheckBox, QComboBox, QDateEdit, QDoubleSpinBox,
     QFileDialog, QFormLayout, QFrame, QGroupBox, QHBoxLayout, QHeaderView, QLabel,
@@ -94,6 +95,63 @@ class Pracownik(QObject):
             self.gotowe.emit(bledy)
         except Exception as e:  # noqa: BLE001 - komunikat dla użytkownika
             self.blad.emit(f"{e}\n\n{traceback.format_exc()}")
+
+
+class PodgladArkuszy(QWidget):
+    """Podgląd ułożenia arkuszy: trasa, ramki z numerami, róg tabelki."""
+
+    def __init__(self):
+        super().__init__()
+        self.linie, self.arkusze, self.zakazane = [], [], None
+        self.setMinimumSize(300, 300)
+
+    def ustaw(self, linie, arkusze, zakazane):
+        self.linie, self.arkusze, self.zakazane = linie, arkusze, zakazane
+        self.update()
+
+    def paintEvent(self, _):
+        p = QPainter(self)
+        p.setRenderHint(QPainter.Antialiasing)
+        p.fillRect(self.rect(), QColor("white"))
+        if not self.arkusze:
+            p.drawText(self.rect(), Qt.AlignCenter, "Brak arkuszy – przeanalizuj projekt.")
+            return
+        xs = [a.x0 for a in self.arkusze] + [a.x0 + a.szer for a in self.arkusze]
+        ys = [a.y0 for a in self.arkusze] + [a.y0 + a.wys for a in self.arkusze]
+        x0, x1, y0, y1 = min(xs), max(xs), min(ys), max(ys)
+        m = 20
+        s = min((self.width() - 2 * m) / (x1 - x0), (self.height() - 2 * m) / (y1 - y0))
+        ox = m + ((self.width() - 2 * m) - (x1 - x0) * s) / 2
+        oy = m + ((self.height() - 2 * m) - (y1 - y0) * s) / 2
+
+        def pt(x, y):
+            return QPointF(ox + (x - x0) * s, oy + (y1 - y) * s)
+
+        kolory = [QColor(c) for c in ("#1f77b4", "#d62728", "#2ca02c", "#9467bd", "#ff7f0e",
+                                      "#17becf", "#8c564b", "#e377c2", "#7f7f7f", "#bcbd22")]
+        for i, a in enumerate(self.arkusze):
+            k = kolory[i % len(kolory)]
+            if self.zakazane:
+                zx0, _, _, zy1 = self.zakazane
+                c = QColor(k)
+                c.setAlpha(40)
+                p.fillRect(QRectF(pt(a.x0 + zx0, a.y0 + zy1), pt(a.x0 + a.szer, a.y0)), c)
+            p.setPen(QPen(k, 1.6))
+            p.setBrush(Qt.NoBrush)
+            p.drawRect(QRectF(pt(a.x0, a.y0 + a.wys), pt(a.x0 + a.szer, a.y0)))
+        p.setPen(QPen(QColor("#222"), 1.8))
+        for ls in self.linie:
+            c = list(ls.coords)
+            for (ax, ay), (bx, by) in zip(c, c[1:]):
+                p.drawLine(pt(ax, ay), pt(bx, by))
+        f = QFont(self.font())
+        f.setPointSize(13)
+        f.setBold(True)
+        p.setFont(f)
+        for i, a in enumerate(self.arkusze):
+            p.setPen(kolory[i % len(kolory)])
+            r = QRectF(pt(a.x0, a.y0 + a.wys), pt(a.x0 + a.szer, a.y0))
+            p.drawText(r, Qt.AlignCenter, a.nazwa)
 
 
 class OknoGlowne(QMainWindow):
@@ -205,7 +263,16 @@ class OknoGlowne(QMainWindow):
         self.cb_dxf = QCheckBox("Numeracja w DXF (*_numeracja.dxf)")
         self.cb_arkusze = QCheckBox("    + arkusze 1:1000 (układy 1, 2, 3…)")
         self.cb_dxf.toggled.connect(self.cb_arkusze.setEnabled)
+        self.s_zakladka = QSpinBox(minimum=0, maximum=200, value=int(self.cfg.zakladka),
+                                   suffix=" m")
+        self.s_zakladka.setToolTip("Wspólny odcinek trasy na sąsiednich arkuszach")
+        self.s_zakladka.valueChanged.connect(self.przelicz_arkusze)
         self.cb_orient = QCheckBox("Plan orientacyjny (*_orientacja.dxf + jpg)")
+        rz_z = QHBoxLayout()
+        rz_z.setContentsMargins(22, 0, 0, 0)
+        rz_z.addWidget(QLabel("Zakładka arkuszy:"))
+        rz_z.addWidget(self.s_zakladka)
+        rz_z.addStretch(1)
         self.cb_pismo = QCheckBox("Pismo – zapytanie o dostęp (*_pismo.docx)")
         self.cb_rozb = QCheckBox("Zestawienie rozbudowane (*_rozbudowana.xlsx)")
         self.cb_upr = QCheckBox("Zestawienie uproszczone (*_uproszczona.xls)")
@@ -213,6 +280,8 @@ class OknoGlowne(QMainWindow):
                   self.cb_orient):
             c.setChecked(True)
             f4.addWidget(c)
+            if c is self.cb_arkusze:
+                f4.addLayout(rz_z)
         fo = QFormLayout()
         fo.setContentsMargins(22, 0, 0, 0)
         self.c_skala = QComboBox()
@@ -280,6 +349,9 @@ class OknoGlowne(QMainWindow):
         self.drzewo.setHeaderLabels(["Kontrola", "Szczegóły"])
         self.drzewo.header().setSectionResizeMode(0, QHeaderView.ResizeToContents)
         self.zakladki.addTab(self.drzewo, "Kontrola projektu")
+
+        self.podglad = PodgladArkuszy()
+        self.zakladki.addTab(self.podglad, "Arkusze")
 
         self.dziennik = QPlainTextEdit(readOnly=True)
         self.dziennik.setFont(QFont("Consolas", 9))
@@ -377,7 +449,18 @@ class OknoGlowne(QMainWindow):
         self.cfg.numer_startowy = self.s_start.value()
         self.cfg.tolerancja_slupa = self.s_tol.value()
         self.cfg.inteligentny_kierunek = self.cb_kier.isChecked()
+        self.cfg.zakladka = float(self.s_zakladka.value())
         return self.cfg
+
+    def przelicz_arkusze(self):
+        if self.projekt and self.projekt.plan:
+            self._konfiguracja()
+            QApplication.setOverrideCursor(Qt.WaitCursor)
+            try:
+                self.projekt.planuj_arkusze()
+            finally:
+                QApplication.restoreOverrideCursor()
+            self._wypelnij_kontrole()
 
     def analizuj(self):
         plik = self.e_plik.text()
@@ -484,6 +567,7 @@ class OknoGlowne(QMainWindow):
 
     def _wypelnij_kontrole(self):
         p = self.projekt
+        self._odswiez_podglad()
         self.drzewo.clear()
         ikona = self.style().standardIcon
 
@@ -567,6 +651,17 @@ class OknoGlowne(QMainWindow):
         plan.setExpanded(True)
         bk.setExpanded(True)
         pr.setExpanded(True)
+
+    def _odswiez_podglad(self):
+        from . import arkusze as ark
+        p = self.projekt
+        if not p or not p.arkusze:
+            self.podglad.ustaw([], [], None)
+            return
+        sz = ark.wczytaj_szablon(p.szablon_doc(), self.cfg.uklad_trasy)
+        k = self.cfg.skala_arkuszy / 1000
+        self.podglad.ustaw(ark.lancuchy_trasy(p.slupy), p.arkusze,
+                           tuple(v * k for v in sz.zakazane))
 
     # ================================================================ generowanie
     def generuj(self):
