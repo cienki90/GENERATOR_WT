@@ -52,8 +52,22 @@ class Config:
     linie_swiatlowodowe: int = 1
     linie_abonenckie: int = 0
 
+    # --- Arkusze rysunkowe (szablon szablony/arkusze_wt.dxf) ---
+    uklad_trasy: str = "a (2)"            # układ szablonu dla arkuszy trasy
+    uklad_orientacji: str = "ORIENTACJA"  # układ szablonu dla planu orientacyjnego
+    skala_arkuszy: int = 1000
+    zakladka: float = 50.0                # zakładka arkuszy wzdłuż trasy [m]
+    margines_mm: float = 10.0             # odstęp trasy od ramki i tabelki [mm papieru]
+    margines_orientacji_mm: float = 5.0
+    warstwa_obrysow: str = "WT_arkusze"   # obrysy arkuszy w modelu (niedrukowalna)
+    nazwa_orientacji: str = "Plan orientacyjny - układ arkusza"
+    warstwa_trasy_orientacji: str = "WT_trasa"
+    warstwa_podkladu: str = "WT_podklad"
+
     # --- Pliki ---
     szablon_pisma: Path = field(default_factory=lambda: KATALOG / "szablony" / "pismo_warunki.docx")
     szablon_rozbudowana: Path = field(default_factory=lambda: KATALOG / "szablony" / "rozbudowana.xlsx")
     szablon_uproszczona: Path = field(default_factory=lambda: KATALOG / "szablony" / "uproszczona.xls")
+    szablon_arkuszy: Path = field(default_factory=lambda: KATALOG / "szablony" / "arkusze_wt.dxf")
+    katalog_kafli: Path = field(default_factory=lambda: KATALOG / "dane" / "kafle")
     plik_slownikow: Path = field(default_factory=lambda: KATALOG / "dane" / "slowniki.xlsx")

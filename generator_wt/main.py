@@ -38,6 +38,13 @@ def main(argv=None) -> int:
     ap.add_argument("--start", type=int, default=1)
     ap.add_argument("--tolerancja", type=float, default=5.0,
                     help="odległość scalania wierzchołków w jeden słup [m]")
+    ap.add_argument("--opracowal")
+    ap.add_argument("--data-rysunku")
+    ap.add_argument("--bez-arkuszy", action="store_true")
+    ap.add_argument("--orientacja", type=int, choices=[10000, 25000],
+                    help="utwórz plan orientacyjny w podanej skali")
+    ap.add_argument("--szarosc", action="store_true", help="podkład w odcieniach szarości")
+    ap.add_argument("--podklad", choices=["osm", "gugik"], default="osm")
     ap.add_argument("--bez-geokodowania", action="store_true")
     ap.add_argument("--tak", action="store_true", help="nie pytaj o potwierdzenie")
     a = ap.parse_args(argv)
@@ -69,12 +76,14 @@ def main(argv=None) -> int:
     if bez:
         print(f"Gminy spoza listy (rejon domyślny {rejon and rejon['Nazwa']}): {', '.join(bez)}")
 
+    p.planuj_arkusze()
+    print(f"Arkuszy 1:{cfg.skala_arkuszy}: {len(p.arkusze)}")
     dlugie = p.przesla()
     if dlugie:
         print(f"\nPrzęsła dłuższe niż {cfg.przeslo_ostrzezenie:g} m: {len(dlugie)}")
-        for d, a, b in dlugie:
+        for d, s1, s2 in dlugie:
             znak = "!!" if d > cfg.przeslo_blad else "  "
-            print(f"  {znak} {a.etykieta}–{b.etykieta}: {d:.2f} m")
+            print(f"  {znak} {s1.etykieta}–{s2.etykieta}: {d:.2f} m")
 
     print("\nPlan numeracji:")
     for x in p.opis_planu():
@@ -87,12 +96,16 @@ def main(argv=None) -> int:
 
     kat = Path(a.katalog) if a.katalog else p.plik.parent
     kat.mkdir(parents=True, exist_ok=True)
-    zad = [("numeracja.dxf", p.zapisz_dxf),
+    zad = [("numeracja.dxf", lambda f: p.zapisz_dxf(f, not a.bez_arkuszy, operator,
+                                                    a.opracowal, a.data_rysunku)),
            ("pismo.docx", lambda f: p.zapisz_pismo(f, operator, a.od, a.do))]
     if a.zestawienie in ("rozbudowana", "oba"):
         zad.append(("rozbudowana.xlsx", p.zapisz_rozbudowana))
     if a.zestawienie in ("uproszczona", "oba"):
         zad.append(("uproszczona.xls", p.zapisz_uproszczona))
+    if a.orientacja:
+        zad.append(("orientacja.dxf", lambda f: p.zapisz_orientacje(
+            f, a.orientacja, a.szarosc, operator, a.opracowal, a.data_rysunku, a.podklad)))
     for przyr, f in zad:
         cel = p.sciezka(kat, przyr)
         f(cel)

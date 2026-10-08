@@ -5,6 +5,10 @@ __pycache__/
 *_pismo.docx
 *_rozbudowana.xlsx
 *_uproszczona.xls
+*_orientacja.dxf
+*_orientacja.jpg
+*_orientacja.jgw
+dane/kafle/
 dane/cache_geokodowania.json
 build/
 dist/

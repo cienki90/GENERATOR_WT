@@ -88,6 +88,8 @@ class Pracownik(QObject):
                 bledy = self.projekt.geokoduj(
                     lambda i, n: self.postep.emit(i, n, f"Pobieranie adresów z GUGiK: {i}/{n}"))
             self.projekt.planuj()
+            self.postep.emit(0, 0, "Rozmieszczanie arkuszy…")
+            self.projekt.planuj_arkusze()
             self.gotowe.emit(bledy)
         except Exception as e:  # noqa: BLE001 - komunikat dla użytkownika
             self.blad.emit(f"{e}\n\n{traceback.format_exc()}")
@@ -162,6 +164,12 @@ class OknoGlowne(QMainWindow):
         f2.addRow("Rejon domyślny:", self.c_rejon)
         f2.addRow("Umowa od:", self.d_od)
         f2.addRow("Umowa do:", self.e_do)
+        self.e_opracowal = QLineEdit(self.ustawienia.value("opracowal", ""),
+                                     placeholderText="imię i nazwisko")
+        self.e_data_rys = QLineEdit(QDate.currentDate().toString("MM.yyyy"))
+        self.e_data_rys.setToolTip("Data w tabelce rysunku")
+        f2.addRow("Opracował:", self.e_opracowal)
+        f2.addRow("Data rysunku:", self.e_data_rys)
         rz = QHBoxLayout()
         b_edytuj = QPushButton(ikona(QStyle.SP_FileDialogDetailedView), " Edytuj listy")
         b_edytuj.setToolTip("Otwiera dane/slowniki.xlsx (operatorzy i rejony energetyczne)")
@@ -194,12 +202,35 @@ class OknoGlowne(QMainWindow):
         g4 = QGroupBox("4. Wyniki")
         f4 = QVBoxLayout(g4)
         self.cb_dxf = QCheckBox("Numeracja w DXF (*_numeracja.dxf)")
+        self.cb_arkusze = QCheckBox("    + arkusze 1:1000 (układy 1, 2, 3…)")
+        self.cb_dxf.toggled.connect(self.cb_arkusze.setEnabled)
+        self.cb_orient = QCheckBox("Plan orientacyjny (*_orientacja.dxf + jpg)")
         self.cb_pismo = QCheckBox("Pismo – zapytanie o dostęp (*_pismo.docx)")
         self.cb_rozb = QCheckBox("Zestawienie rozbudowane (*_rozbudowana.xlsx)")
         self.cb_upr = QCheckBox("Zestawienie uproszczone (*_uproszczona.xls)")
-        for c in (self.cb_dxf, self.cb_pismo, self.cb_rozb, self.cb_upr):
+        for c in (self.cb_dxf, self.cb_arkusze, self.cb_pismo, self.cb_rozb, self.cb_upr,
+                  self.cb_orient):
             c.setChecked(True)
             f4.addWidget(c)
+        fo = QFormLayout()
+        fo.setContentsMargins(22, 0, 0, 0)
+        self.c_skala = QComboBox()
+        self.c_skala.addItem("1:10 000", 10000)
+        self.c_skala.addItem("1:25 000", 25000)
+        self.c_zrodlo = QComboBox()
+        self.c_zrodlo.addItem("OpenStreetMap (zapasowo GUGiK)", "osm")
+        self.c_zrodlo.addItem("Mapa topograficzna GUGiK", "gugik")
+        self.cb_szarosc = QCheckBox("Podkład w odcieniach szarości")
+        self.cb_trasa_or = QCheckBox("Pokaż trasę na planie")
+        self.cb_trasa_or.setChecked(True)
+        fo.addRow("Skala:", self.c_skala)
+        fo.addRow("Podkład:", self.c_zrodlo)
+        fo.addRow(self.cb_szarosc)
+        fo.addRow(self.cb_trasa_or)
+        self.w_orient = QWidget()
+        self.w_orient.setLayout(fo)
+        self.cb_orient.toggled.connect(self.w_orient.setEnabled)
+        f4.addWidget(self.w_orient)
         rk = QHBoxLayout()
         self.e_katalog = QLineEdit(placeholderText="Folder wyników (domyślnie folder projektu)")
         b_kat = QPushButton(ikona(QStyle.SP_DirIcon), "")
@@ -405,6 +436,7 @@ class OknoGlowne(QMainWindow):
         if self.projekt and self.projekt.slupy:
             self._konfiguracja()
             self.projekt.planuj()
+            self.projekt.planuj_arkusze()
             self._wypelnij_tabele()
             self._wypelnij_kontrole()
 
@@ -501,6 +533,12 @@ class OknoGlowne(QMainWindow):
         if poza:
             QTreeWidgetItem(st, ["(poza strefami)", f"{poza} słupów – grupowane wg miejscowości"])
 
+        ar = QTreeWidgetItem([f"Arkusze 1:{self.cfg.skala_arkuszy}",
+                              f"{len(p.arkusze)} (zakładka {self.cfg.zakladka:g} m)"])
+        ar.setIcon(0, ikona(QStyle.SP_FileDialogContentsView))
+        for a in p.arkusze:
+            QTreeWidgetItem(ar, [f"Arkusz {a.nazwa}", ", ".join(a.miejscowosci) or "–"])
+
         bez_opisu = [w for w in p.plan if not w.rodzaj_slupa]
         op = QTreeWidgetItem(["Słupy bez opisu rodzaju/typu",
                               f"{len(bez_opisu)} (opisano {p.opisanych_slupow})"])
@@ -513,7 +551,7 @@ class OknoGlowne(QMainWindow):
             o.setIcon(0, ikona(QStyle.SP_MessageBoxWarning))
             for t in p.ostrzezenia:
                 QTreeWidgetItem(o, ["", t])
-        self.drzewo.addTopLevelItems([plan, bk, pr, st, op] + ([o] if p.ostrzezenia else []))
+        self.drzewo.addTopLevelItems([plan, bk, pr, ar, st, op] + ([o] if p.ostrzezenia else []))
         plan.setExpanded(True)
         bk.setExpanded(True)
         pr.setExpanded(True)
@@ -541,6 +579,9 @@ class OknoGlowne(QMainWindow):
                       "numerów – zostaną zastąpione.</p>")
         if p.bledne_kliki:
             tekst += f"<p>Scalono {len(p.bledne_kliki)} błędnych klików.</p>"
+        if self.cb_dxf.isChecked() and self.cb_arkusze.isChecked():
+            tekst += (f"<p>Arkusze 1:{self.cfg.skala_arkuszy}: {len(p.arkusze)} "
+                      "(układy papieru 1–" + str(len(p.arkusze)) + ").</p>")
         tekst += f"<p>Pliki zostaną zapisane w:<br><i>{kat}</i></p>"
         tekst += "<p><b>Czy wykonać numerację?</b></p>"
         if QMessageBox.question(self, "Potwierdzenie numeracji", tekst,
@@ -550,11 +591,15 @@ class OknoGlowne(QMainWindow):
             return
 
         operator = self.c_operator.currentData()
+        opracowal = self.e_opracowal.text().strip() or None
+        data_rys = self.e_data_rys.text().strip() or None
+        self.ustawienia.setValue("opracowal", self.e_opracowal.text().strip())
         self.ustawienia.setValue("operator", self.c_operator.currentText())
         self.ustawienia.setValue("rejon", self.c_rejon.currentText())
         zadania = []
         if self.cb_dxf.isChecked():
-            zadania.append(("numeracja.dxf", p.zapisz_dxf))
+            zadania.append(("numeracja.dxf", lambda f: p.zapisz_dxf(
+                f, self.cb_arkusze.isChecked(), operator, opracowal, data_rys)))
         if self.cb_pismo.isChecked():
             zadania.append(("pismo.docx", lambda f: p.zapisz_pismo(
                 f, operator, self.d_od.date().toString("dd.MM.yyyy"),
@@ -563,6 +608,25 @@ class OknoGlowne(QMainWindow):
             zadania.append(("rozbudowana.xlsx", p.zapisz_rozbudowana))
         if self.cb_upr.isChecked():
             zadania.append(("uproszczona.xls", p.zapisz_uproszczona))
+
+        if self.cb_orient.isChecked():
+            def orient(f):
+                self.pasek.setVisible(True)
+
+                def post(i, n):
+                    self.pasek.setRange(0, n)
+                    self.pasek.setValue(i)
+                    self.l_stan.setText(f"Pobieranie podkładu: {i}/{n}")
+                    QApplication.processEvents()
+                try:
+                    o = p.zapisz_orientacje(f, self.c_skala.currentData(),
+                                            self.cb_szarosc.isChecked(), operator, opracowal,
+                                            data_rys, self.c_zrodlo.currentData(),
+                                            self.cb_trasa_or.isChecked(), post, self.log)
+                    self.log(f"Plan orientacyjny: arkusze {', '.join(a.nazwa for a in o)}")
+                finally:
+                    self.pasek.setVisible(False)
+            zadania.append(("orientacja.dxf", orient))
 
         zapisane, bledy = [], []
         QApplication.setOverrideCursor(Qt.WaitCursor)

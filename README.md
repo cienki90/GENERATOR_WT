@@ -30,9 +30,26 @@ Opcjonalnie `buduj_exe.bat` tworzy samodzielny `dist\Generator WT\Generator WT.e
 - Odnośnik jest kierowany na stronę z dala od linii.
 - Poprzednia numeracja na tej warstwie jest zastępowana. Wynik trafia do `*_numeracja.dxf`, a oryginał zostaje bez zmian.
 
+### Kontrola przęseł
+
+W zakładce „Kontrola projektu” są wymienione przęsła dłuższe niż 55 m. Te powyżej 60 m są oznaczone na czerwono.
+
+### Arkusze 1:1000 (w pliku `*_numeracja.dxf`)
+
+- Układy papieru „1”, „2”, „3”… są tworzone z szablonu `szablony/arkusze_wt.dxf` (układ „a (2)”): format A3, kierunek N-S, bez obrotu, skala 1:1000.
+- Arkusze są układane wzdłuż trasy tak, żeby było ich jak najmniej. Sąsiednie arkusze mają zakładkę 50 m. Trasa nie wchodzi pod tabelkę i legendę w prawym dolnym rogu.
+- W tabelce program uzupełnia: inwestora (wybrany operator), opracował, datę, numer rysunku, skalę, miejscowości widoczne na arkuszu.
+- Obrysy arkuszy z numerami są w modelu na niedrukowalnej warstwie `WT_arkusze`.
+
+### Plan orientacyjny (`*_orientacja.dxf` + `*_orientacja.jpg`)
+
+- Oddzielny plik z podkładem OSM. Zapasowo, albo jeśli to wybierzesz, używana jest mapa topograficzna GUGiK. Podkład może być w kolorze lub w odcieniach szarości.
+- Plan zawiera obrysy arkuszy z numerami, trasę (opcjonalnie) oraz arkusze A3 „0.A”, „0.B”… w skali 1:10 000 lub 1:25 000. Nazwa rysunku: „Plan orientacyjny - układ arkusza”.
+- Obraz JPG jest podpięty do DXF ścieżką względną. Przenoś go razem z plikiem DXF. Plik `.jgw` to georeferencja.
+
 ## Pliki
 
-- `szablony/` zawiera szablony pisma (`pismo_warunki.docx`), zestawienia rozbudowanego (`rozbudowana.xlsx`) i uproszczonego (`uproszczona.xls`).
+- `szablony/` zawiera szablony pisma (`pismo_warunki.docx`), zestawień (`rozbudowana.xlsx`, `uproszczona.xls`) i arkuszy (`arkusze_wt.dxf`).
 - `dane/slowniki.xlsx` ma dwa arkusze:
   - `Operatorzy`,
   - `Rejony`: `Nazwa` (do pisma), `Nazwa skrócona` (do Excela), `Gminy` (rozdzielone `;`).
@@ -47,4 +64,5 @@ Wiersz poleceń (do automatyzacji): `python -m generator_wt.main projekt.dxf --t
 2. Pismo i zestawienia według szablonów, listy operatorów i rejonów (zrobione).
 3. Adresy z GUGiK (zrobione).
 4. Okno programu (zrobione).
-5. Identyfikacja słupów powiązana ze stacjami trafo.
+5. Arkusze 1:1000, plan orientacyjny, raport przęseł (zrobione).
+6. Identyfikacja słupów powiązana ze stacjami trafo.
