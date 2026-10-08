@@ -1,45 +1,50 @@
 # Generator WT
 
-Program numeruje słupy (wierzchołki polilinii na warstwie `!tele`) w pliku DXF. Na tej podstawie tworzy:
+Program okienkowy, który numeruje słupy (wierzchołki polilinii warstwy `!tele`) w pliku DXF. Na podstawie numeracji tworzy:
 - pismo „Zapytanie o możliwość dostępu do słupów elektroenergetycznych” (docx),
-- zestawienie `rozbudowana.xlsx` albo `uproszczona.xls`.
+- zestawienie rozbudowane (`.xlsx`) i uproszczone (`.xls`) według szablonów.
 
-## Instalacja
+## Instalacja (Windows)
 
-```
-pip install -r requirements.txt
-```
+1. Zainstaluj Pythona 3.11 lub nowszego z python.org. Przy instalacji zaznacz „Add Python to PATH”.
+2. Uruchom `instaluj.bat`.
+3. Program uruchamiasz plikiem `Generator WT.bat` albo dwuklikiem w `uruchom.pyw`.
 
-## Użycie
+Opcjonalnie `buduj_exe.bat` tworzy samodzielny `dist\Generator WT\Generator WT.exe`. Na komputerze, na którym potem uruchamiasz ten plik, nie trzeba instalować Pythona.
 
-```
-python -m generator_wt.main projekt.dxf
-```
+## Praca z programem
 
-Program po kolei:
-1. Czyta polilinie `!tele` (każdy wierzchołek to słup; bloki są pomijane) i zamknięte polilinie `!trafo` (zasięgi stacji). Nazwa stacji to tekst z warstwy `!trafo` leżący w obrysie.
-2. Pobiera z GUGiK miejscowość, ulicę, kod pocztowy, gminę, powiat, obręb i działkę dla każdego słupa. Układ PL-2000 albo PL-1992 rozpoznaje sam. Wyniki zapisuje w pliku cache.
-3. Pokazuje plan numeracji i **pyta o potwierdzenie**. Numeracja jest ciągła i biegnie wzdłuż trasy:
-   - słupy w zasięgu jednej stacji trafo mają kolejne numery,
-   - poza strefami trafo numery są grupowane według miejscowości.
-4. Zapisuje numery na warstwie `!tele_nr` w pliku `projekt_numeracja.dxf`. Oryginał zostaje bez zmian.
-5. Daje wybór operatora z listy. Rejon energetyczny dobiera według gminy, a jeśli gmina nie jest przypisana, pyta o wybór.
-6. Tworzy `projekt_pismo.docx` oraz `projekt_rozbudowana.xlsx` i/lub `projekt_uproszczona.xls`.
+1. **Plik projektowy:** wybierz plik DXF. Analiza uruchamia się sama. Program wtedy:
+   - scala wierzchołki leżące bliżej niż 5 m w jeden słup (błędne kliknięcia),
+   - wyznacza strefy trafo z polilinii `!trafo`. Niezamknięte polilinie są domykane. Nazwa strefy to numer stacji z opisu (multileader „STACJA TRAFO 05-0792”). Obrysy bez opisu stacji dołączane są do strefy, z którą się stykają,
+   - odczytuje rodzaj i typ słupa z opisów „słup nN / P-10/ZN”,
+   - pobiera z GUGiK miejscowość, ulicę, gminę i działkę.
+2. **Zlecenie:** wybierz operatora i rejon domyślny. Rejon dobierany jest według gminy z listy w `dane/slowniki.xlsx`, a dla gmin spoza listy używany jest rejon domyślny. Listy edytujesz przyciskiem „Edytuj listy”.
+3. Sprawdź zakładki „Wykaz słupów” i „Kontrola projektu”. W wykazie możesz poprawić miejscowość, ulicę, gminę, rodzaj i typ słupa oraz uwagi.
+4. Kliknij **Numeruj i generuj dokumenty**. Program pokaże plan i zapyta o potwierdzenie.
 
-Opcje: `--zestawienie rozbudowana|uproszczona|oba|brak`, `--operator NAZWA`, `--rejon NAZWA`, `--od 01.06.2026`, `--do -`, `--prefiks S`, `--start 1`, `--bez-geokodowania`, `--tak` (bez pytań).
+### Numeracja
+
+- Jest ciągła i biegnie wzdłuż trasy. Słupy jednej stacji trafo mają kolejne numery. Słupy poza strefami są grupowane według miejscowości.
+- Wygląd odpowiada plikowi `przyklady/numeracja_leader.dxf`: odnośnik (LEADER) z tekstem (MTEXT) o wysokości 3,0, styl GeodText, warstwa `makro-numeracja-punktow`.
+- Odnośnik jest kierowany na stronę z dala od linii.
+- Poprzednia numeracja na tej warstwie jest zastępowana. Wynik trafia do `*_numeracja.dxf`, a oryginał zostaje bez zmian.
 
 ## Pliki
 
-- `szablony/pismo_warunki.docx` to szablon pisma. Program podmienia w nim dane operatora, daty, słup początkowy i końcowy, liczbę słupów oraz tabelę wykazu słupów.
-- `dane/slowniki.xlsx` zawiera dwa arkusze:
-  - `Operatorzy`: kolumny jak pola w piśmie,
-  - `Rejony`: `Nazwa` i `Gminy` (gminy rozdzielone `;`).
-- `generator_wt/config.py` przechowuje ustawienia: nazwy warstw, wysokość i odsunięcie tekstu numeru, tolerancję, promień szukania adresu.
+- `szablony/` zawiera szablony pisma (`pismo_warunki.docx`), zestawienia rozbudowanego (`rozbudowana.xlsx`) i uproszczonego (`uproszczona.xls`).
+- `dane/slowniki.xlsx` ma dwa arkusze:
+  - `Operatorzy`,
+  - `Rejony`: `Nazwa` (do pisma), `Nazwa skrócona` (do Excela), `Gminy` (rozdzielone `;`).
+- `przyklady/` zawiera przykładowy projekt i wzór numeracji.
+- `generator_wt/config.py` przechowuje ustawienia: warstwy, wygląd numeracji, tolerancje.
+
+Wiersz poleceń (do automatyzacji): `python -m generator_wt.main projekt.dxf --tak`.
 
 ## Plan
 
-1. Numeracja w DXF (zrobione).
-2. Zestawienia Excel oraz pismo docx z operatorem i rejonem (zrobione, wersja wstępna).
-3. Automatyczne uzupełnianie miejscowości, ulicy i gminy z GUGiK (zrobione).
-4. Identyfikacja słupów powiązana ze stacjami trafo.
-5. GUI albo `.exe`.
+1. Numeracja w DXF, scalanie błędnych kliknięć (zrobione).
+2. Pismo i zestawienia według szablonów, listy operatorów i rejonów (zrobione).
+3. Adresy z GUGiK (zrobione).
+4. Okno programu (zrobione).
+5. Identyfikacja słupów powiązana ze stacjami trafo.

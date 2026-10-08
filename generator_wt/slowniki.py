@@ -1,8 +1,8 @@
 """Słowniki z Excela: operatorzy i rejony energetyczne (dane/slowniki.xlsx).
 
 Arkusz "Operatorzy" - kolumny odpowiadają polom pisma (patrz KOLUMNY_OPERATORA).
-Arkusz "Rejony"     - Nazwa, Gminy (lista gmin rozdzielona przecinkami/średnikami),
-                      pozostałe kolumny dowolne.
+Arkusz "Rejony"     - Nazwa (do pisma), Nazwa skrócona (do zestawień Excel),
+                      Gminy (lista gmin rozdzielona średnikami), pozostałe dowolne.
 Pierwszy wiersz każdego arkusza to nagłówki. Kolumny można dopisywać.
 """
 from __future__ import annotations
@@ -19,7 +19,7 @@ ARKUSZ_REJONY = "Rejony"
 KOLUMNY_OPERATORA = ["Nazwa", "Numer Umowy Ramowej", "Pełna nazwa", "Adres (siedziba)",
                      "Kod pocztowy", "NIP", "Regon", "Numer wpisu do RPT",
                      "Dane kontaktowe"]
-KOLUMNY_REJONU = ["Nazwa", "Gminy", "Uwagi"]
+KOLUMNY_REJONU = ["Nazwa", "Nazwa skrócona", "Gminy", "Uwagi"]
 
 
 def wczytaj_liste(plik: Path, arkusz: str) -> list[dict[str, str]]:
@@ -62,7 +62,8 @@ def _norm(t: str) -> str:
     return re.sub(r"\s+", " ", t.strip().casefold())
 
 
-def rejon_dla_gminy(rejony: list[dict[str, str]], gmina: str | None) -> str | None:
+def rejon_dla_gminy(rejony: list[dict[str, str]], gmina: str | None
+                    ) -> dict[str, str] | None:
     """Rejon energetyczny, w którego kolumnie 'Gminy' występuje dana gmina."""
     if not gmina:
         return None
@@ -70,7 +71,7 @@ def rejon_dla_gminy(rejony: list[dict[str, str]], gmina: str | None) -> str | No
     for r in rejony:
         gminy = {_norm(x) for x in re.split(r"[;,\n]", r.get("Gminy", "")) if x.strip()}
         if g in gminy:
-            return r.get("Nazwa")
+            return r
     return None
 
 
@@ -86,8 +87,9 @@ def utworz_szablon(plik: Path) -> None:
                "Marcin Macko tel. 502 761 590 marcin.macko@mmui.pl"])
     ws2 = wb.create_sheet(ARKUSZ_REJONY)
     ws2.append(KOLUMNY_REJONU)
-    ws2.append(["Rejon Energetyczny Mińsk Mazowiecki",
-                "Mińsk Mazowiecki; Mińsk Mazowiecki (miasto)", ""])
+    ws2.append(["Rejon Energetyczny Mińsk Mazowiecki", "Mińsk Mazowiecki",
+                "Mińsk Mazowiecki; Mińsk Mazowiecki (miasto); Dębe Wielkie; Jakubów", ""])
+    ws2.append(["Rejon Energetyczny Otwock", "OTWOCK", "Otwock; Józefów; Karczew; Celestynów; Halinów", ""])
     for arkusz in wb.worksheets:
         for c in arkusz[1]:
             c.font = Font(bold=True)
@@ -96,3 +98,9 @@ def utworz_szablon(plik: Path) -> None:
             arkusz.column_dimensions[kol[0].column_letter].width = 30
         arkusz.freeze_panes = "A2"
     wb.save(plik)
+
+
+def nazwa_skrocona(rejon: dict[str, str] | None) -> str | None:
+    if not rejon:
+        return None
+    return rejon.get("Nazwa skrócona") or rejon.get("Nazwa")

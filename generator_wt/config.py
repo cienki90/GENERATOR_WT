@@ -1,37 +1,55 @@
-"""Ustawienia programu - nazwy warstw, parametry tekstów, tolerancje, ścieżki."""
-from dataclasses import dataclass
+"""Ustawienia programu - nazwy warstw, wygląd numeracji, tolerancje, ścieżki."""
+import sys
+from dataclasses import dataclass, field
 from pathlib import Path
 
-KATALOG = Path(__file__).resolve().parent.parent
+# Katalog programu (działa też po spakowaniu do .exe przez PyInstaller)
+if getattr(sys, "frozen", False):
+    KATALOG = Path(sys.executable).resolve().parent
+else:
+    KATALOG = Path(__file__).resolve().parent.parent
 
 
 @dataclass
 class Config:
-    # Warstwy wejściowe (polilinie; bloki są pomijane)
-    warstwa_tele: str = "!tele"
-    warstwa_trafo: str = "!trafo"
+    # --- Warstwy wejściowe (nazwy bez rozróżniania wielkości liter) ---
+    warstwa_tele: str = "!tele"     # polilinie, wierzchołek = słup
+    warstwa_trafo: str = "!trafo"   # obrysy zasięgu stacji trafo
+    # Opisy stacji: MULTILEADER/TEXT/MTEXT na warstwach zawierających ten fragment
+    fragment_warstwy_opisu_trafo: str = "trafo"
+    # Opisy słupów (MULTILEADER "słup nN\\P<typ>") - strzałka wskazuje słup
+    prefiks_opisu_slupa: str = "słup"
 
-    # Warstwa, na którą trafiają numery słupów
-    warstwa_numeracji: str = "!tele_nr"
+    # --- Numeracja w DXF (wygląd jak w numeracja_leader.dxf) ---
+    warstwa_numeracji: str = "makro-numeracja-punktow"
+    kolor_warstwy: int = 7
+    styl_tekstu: str = "GeodText"
+    czcionka_stylu: str = "romans.shx"
+    wysokosc_tekstu: float = 3.0
+    odsuniecie_x: float = 3.73     # załamanie odnośnika względem słupa
+    odsuniecie_y: float = 3.0
+    polka: float = 0.18            # długość "półki" odnośnika
+    odstep_tekstu: float = 0.09    # odstęp tekstu od końca półki
+    grubosc_linii: int = 30        # 0.30 mm
+    # Odnośnik po stronie z dala od linii (True) albo zawsze w prawo-górę (False)
+    inteligentny_kierunek: bool = True
 
-    # Parametry tekstu numeru
-    wysokosc_tekstu: float = 1.5
-    przesuniecie_x: float = 0.8
-    przesuniecie_y: float = 0.8
-    kolor_numeracji: int = 1  # 1 = czerwony (ACI)
-
-    # Wierzchołki bliżej niż tolerancja [m] traktujemy jako jeden słup
-    tolerancja: float = 0.01
+    # Wierzchołki bliżej niż ta odległość [m] = jeden słup (błędny klik)
+    tolerancja_slupa: float = 5.0
 
     numer_startowy: int = 1
     prefiks: str = ""
 
-    # Grupa dla słupów poza strefami trafo, dla których nie ustalono miejscowości
     grupa_nieznana: str = "NIEUSTALONA MIEJSCOWOŚĆ"
-
-    # Promień szukania najbliższego punktu adresowego [m]
     promien_adresu: int = 300
+    miejsca_po_przecinku: int = 2
 
-    # Szablony i słowniki
-    szablon_pisma: Path = KATALOG / "szablony" / "pismo_warunki.docx"
-    plik_slownikow: Path = KATALOG / "dane" / "slowniki.xlsx"
+    # Domyślne wartości kolumn zestawienia rozbudowanego
+    linie_swiatlowodowe: int = 1
+    linie_abonenckie: int = 0
+
+    # --- Pliki ---
+    szablon_pisma: Path = field(default_factory=lambda: KATALOG / "szablony" / "pismo_warunki.docx")
+    szablon_rozbudowana: Path = field(default_factory=lambda: KATALOG / "szablony" / "rozbudowana.xlsx")
+    szablon_uproszczona: Path = field(default_factory=lambda: KATALOG / "szablony" / "uproszczona.xls")
+    plik_slownikow: Path = field(default_factory=lambda: KATALOG / "dane" / "slowniki.xlsx")
