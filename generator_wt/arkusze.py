@@ -1,10 +1,11 @@
-"""Arkusze rysunkowe (układy papieru) na podstawie szablonu 'arkusze do wt.dxf'.
+"""Arkusze rysunkowe (układy papieru) na podstawie szablonu szablony/arkusze_wt.dxf.
 
 - rozmieszczenie arkuszy wzdłuż trasy (N-S, bez obrotu), z zakładką,
   tak by trasa nie wchodziła pod tabelkę/legendę w prawym dolnym rogu,
 - tworzenie układów papieru z szablonu: ramka, tabelka, legenda, rzutnia w skali,
-- uzupełnianie tabelki: inwestor (operator), opracował, data, nr rysunku, skala,
-  nazwa rysunku, obiekt (miejscowości widoczne na arkuszu).
+- uzupełnianie pól tabelki wg etykiet ("Nr rysunku:", "Skala:", "Nazwa rysunku:",
+  "Obiekt:", "INWESTOR", "Opracował:", "Data:") - wartość to tekst pod etykietą,
+- wszystkie teksty ustawiane na czcionkę Arial.
 """
 from __future__ import annotations
 
@@ -15,19 +16,49 @@ from dataclasses import dataclass, field
 import ezdxf
 import numpy as np
 import shapely
-from shapely import affinity
 from ezdxf import bbox
 from ezdxf.addons import Importer
 from ezdxf.document import Drawing
+from shapely import affinity
 from shapely.geometry import LineString, Point, box
 from shapely.ops import unary_union
 
 from .model import Wierzcholek
 
+STYL_ARIAL = "WT_Arial"
+
+# ====================================================================== czcionki
+
+
+def styl_arial(doc: Drawing, nazwa: str = STYL_ARIAL) -> str:
+    """Styl tekstu z czcionką Arial (tworzony, jeśli go nie ma)."""
+    if nazwa not in doc.styles:
+        doc.styles.add(nazwa, font="arial.ttf")
+    else:
+        doc.styles.get(nazwa).dxf.font = "arial.ttf"
+    return nazwa
+
+
+def na_arial(tekst: str) -> str:
+    """Zamienia kody czcionek MTEXT (\\fLato Light|b1|...;) na Arial, zachowując pogrubienie."""
+    def zamien(m):
+        b = re.search(r"\|b(\d)", m.group(0))
+        return f"\\fArial|b{b.group(1) if b else 0}|i0|c238|p34;"
+    return re.sub(r"\\[fF][^;]*;", zamien, tekst)
+
+
+def ujednolic_teksty(doc: Drawing, encje) -> None:
+    styl = styl_arial(doc)
+    for e in encje:
+        t = e.dxftype()
+        if t == "MTEXT":
+            e.dxf.style = styl
+            e.text = na_arial(e.text)
+        elif t in ("TEXT", "ATTRIB", "ATTDEF"):
+            e.dxf.style = styl
+
+
 # ====================================================================== szablon
-
-ROLE = ("nr", "skala", "nazwa", "obiekt")
-
 
 @dataclass
 class SzablonUkladu:
@@ -35,22 +66,10 @@ class SzablonUkladu:
     nazwa: str
     atrybuty_ukladu: dict
     vp_srodek: tuple[float, float]
-    vp_rozmiar: tuple[float, float]           # [mm papieru]
+    vp_rozmiar: tuple[float, float]              # [mm papieru]
     vp_atrybuty: dict
-    zakazane: tuple[float, float, float, float]  # róg tabelki/legendy wzgl. lewego dolnego rogu rzutni [mm]
-    encje: list = field(default_factory=list)  # encje układu poza rzutniami
-    role: dict = field(default_factory=dict)   # rola -> (x, y) położenia MTEXT
-
-
-def _rola_tekstu(tekst: str) -> str | None:
-    t = _bez_formatow(tekst)
-    if re.fullmatch(r"\d+(\.\w+)?", t):
-        return "nr"
-    if re.fullmatch(r"1\s*:\s*[\d\s]+", t):
-        return "skala"
-    if "miejscowo" in t.lower() or t.lower().startswith("projektowane"):
-        return "obiekt"
-    return "nazwa"
+    zakazane: tuple[float, float, float, float]  # tabelka+legenda wzgl. lewego dolnego rogu rzutni
+    encje: list = field(default_factory=list)    # encje układu poza rzutniami
 
 
 def _bez_formatow(t: str) -> str:
@@ -69,24 +88,29 @@ def wczytaj_szablon(doc: Drawing, nazwa_ukladu: str) -> SzablonUkladu:
     w, h = vp.dxf.width, vp.dxf.height
     x0, y0 = cx - w / 2, cy - h / 2
 
-    encje = [e for e in uk if e.dxftype() != "VIEWPORT"]
-    wstawienia = [e for e in encje if e.dxftype() == "INSERT"]
-    if wstawienia:
-        ext = bbox.extents(wstawienia)
+    # wypełnienia (białe tło tabelki) na spód, żeby nie zasłaniały tekstów
+    encje = sorted((e for e in uk if e.dxftype() != "VIEWPORT"),
+                   key=lambda e: 0 if e.dxftype() in ("HATCH", "WIPEOUT", "SOLID") else 1)
+
+    # ramka = największa polilinia; tabelka i legenda = wszystko pozostałe
+    def pole(e):
+        if e.dxftype() != "LWPOLYLINE":
+            return 0
+        ext = bbox.extents([e])
+        return ext.size.x * ext.size.y if ext.has_data else 0
+    ramka = max(encje, key=pole, default=None)
+    reszta = [e for e in encje if e is not ramka]
+    ext = bbox.extents(reszta) if reszta else None
+    if ext is not None and ext.has_data:
         zak = (ext.extmin.x - x0, ext.extmin.y - y0, ext.extmax.x - x0, ext.extmax.y - y0)
     else:
         zak = (w, 0, w, 0)
-    role = {}
-    for e in encje:
-        if e.dxftype() == "MTEXT":
-            r = _rola_tekstu(e.text)
-            role.setdefault(r, (e.dxf.insert.x, e.dxf.insert.y))
     pomin = {"handle", "owner", "name", "taborder", "block_record_handle", "viewport_handle",
              "extmin", "extmax", "layout_flags"}
     atr = {k: v for k, v in uk.dxf_layout.dxfattribs().items() if k not in pomin}
     vatr = {k: v for k, v in vp.dxfattribs().items()
             if k in ("flags", "status", "circle_zoom", "render_mode", "ucs_icon")}
-    return SzablonUkladu(nazwa_ukladu, atr, (cx, cy), (w, h), vatr, zak, encje, role)
+    return SzablonUkladu(nazwa_ukladu, atr, (cx, cy), (w, h), vatr, zak, encje)
 
 
 # ====================================================================== rozmieszczanie
@@ -235,20 +259,20 @@ def rozmiesc(linie: list[LineString], W: float, H: float, zakazane, margines: fl
     return [kand_xy[j] for j in wybrane]
 
 
+
 # ====================================================================== tabelka
 
 def _ustaw_mtext(e, nowy_tekst: str) -> None:
     """Podmienia treść MTEXT, zachowując początkowe kody formatowania."""
-    stary = e.text
-    m = re.match(r"^((?:\\[A-Za-z][^;\\{}]*;|\{)*)(.*?)(\}*)$", stary, re.S)
+    m = re.match(r"^((?:\\[A-Za-z][^;\\{}]*;|\{)*)(.*?)(\}*)$", e.text, re.S)
+    nowy = nowy_tekst.replace("\n", "\\P")
     if m and m.group(1):
         poczatek, kon = m.group(1), m.group(3)
-        # zachowaj formaty znajdujące się wewnątrz klamry, np. {\fLato...;\C256;tekst}
         wew = re.match(r"^((?:\\[A-Za-z][^;\\{}]*;)*)", m.group(2))
         poczatek += wew.group(1) if wew else ""
-        e.text = poczatek + nowy_tekst + kon
+        e.text = poczatek + nowy + kon
     else:
-        e.text = nowy_tekst
+        e.text = nowy
 
 
 def tekst_obiektu(szablon: str, miejscowosci: list[str]) -> str:
@@ -263,33 +287,40 @@ def tekst_obiektu(szablon: str, miejscowosci: list[str]) -> str:
     return f"{plain} {lacznik} {lista}"
 
 
-def uzupelnij_tabelke(doc: Drawing, nazwa_bloku: str, inwestor: str | None,
-                      opracowal: str | None, data: str | None) -> None:
-    """Pola w bloku tabelki: tekst pod etykietą INWESTOR / Opracował: / Data:."""
-    blk = doc.blocks.get(nazwa_bloku)
-    if blk is None:
-        return
-    mt = [e for e in blk if e.dxftype() == "MTEXT"]
+def _etykieta(tekst: str) -> str:
+    return _bez_formatow(tekst).rstrip(":").strip().lower()
 
-    def pod(etykieta: str):
-        lab = next((e for e in mt if _bez_formatow(e.text).rstrip(":").strip().lower()
-                    == etykieta.lower()), None)
-        if lab is None:
-            return None
-        lx, ly = lab.dxf.insert.x, lab.dxf.insert.y
-        # wartość = najbliższy tekst poniżej etykiety, który sam nie jest etykietą
-        kand = [e for e in mt if e is not lab and e.dxf.insert.y < ly - 0.5
-                and ly - e.dxf.insert.y < 12 and abs(e.dxf.insert.x - lx) < 12
-                and not _bez_formatow(e.text).endswith(":")]
-        return min(kand, key=lambda e: (ly - e.dxf.insert.y) + abs(e.dxf.insert.x - lx),
-                   default=None)
 
-    for etykieta, wartosc in (("INWESTOR", inwestor), ("Opracował", opracowal),
-                              ("Data", data)):
-        if wartosc:
-            e = pod(etykieta)
-            if e is not None:
-                _ustaw_mtext(e, wartosc.replace("\n", "\\P"))
+def pole_tabelki(mtexty: list, etykieta: str):
+    """MTEXT z wartością pola: najbliższy tekst poniżej etykiety, w tej samej
+    kolumnie lub na prawo od niej, który sam nie jest etykietą."""
+    lab = next((e for e in mtexty if _etykieta(e.text) == etykieta.lower()), None)
+    if lab is None:
+        return None
+    lx, ly = lab.dxf.insert.x, lab.dxf.insert.y
+    kand = [e for e in mtexty if e is not lab and ly - 12 < e.dxf.insert.y < ly - 0.5
+            and lx - 1.5 <= e.dxf.insert.x < lx + 14
+            and not _bez_formatow(e.text).endswith(":")
+            and _etykieta(e.text) not in ("inwestor",)]
+    return min(kand, key=lambda e: (ly - e.dxf.insert.y) + 0.5 * abs(e.dxf.insert.x - lx),
+               default=None)
+
+
+def wypelnij_tabelke(encje, wartosci: dict[str, str | None]) -> None:
+    """wartosci: etykieta -> nowy tekst (None = bez zmian). Dla 'Obiekt' podaj listę
+    miejscowości jako tekst rozdzielony przecinkami, poprzedzony znakiem '§'."""
+    mt = [e for e in encje if e.dxftype() == "MTEXT"]
+    for etykieta, wartosc in wartosci.items():
+        if wartosc is None:
+            continue
+        e = pole_tabelki(mt, etykieta)
+        if e is None:
+            continue
+        if etykieta.lower() == "obiekt" and wartosc.startswith("§"):
+            lista = [x for x in wartosc[1:].split("|") if x]
+            _ustaw_mtext(e, tekst_obiektu(e.text, lista))
+        else:
+            _ustaw_mtext(e, wartosc)
 
 
 # ====================================================================== tworzenie układów
@@ -327,6 +358,29 @@ def usun_arkusze(doc: Drawing, nazwy) -> None:
             doc.layouts.delete(n)
 
 
+def _nowy_uklad(doc: Drawing, nazwa: str, szablon: SzablonUkladu):
+    """Układ papieru z ustawieniami strony szablonu i główną rzutnią papieru (id 1)."""
+    if nazwa in doc.layouts:
+        doc.layouts.delete(nazwa)
+    uk = doc.layouts.new(nazwa)
+    a = szablon.atrybuty_ukladu
+    uk.page_setup(size=(a.get("paper_width", 420.0), a.get("paper_height", 297.0)),
+                  margins=(a.get("top_margin", 0), a.get("right_margin", 0),
+                           a.get("bottom_margin", 0), a.get("left_margin", 0)),
+                  units="mm", rotation=a.get("plot_rotation", 0), scale=(1, 1),
+                  name="ISO_full_bleed_A3_(420.00_x_297.00_MM)",
+                  device=a.get("plot_configuration_file", "DWG To PDF.pc3"))
+    uk.dxf_layout.dxf.paper_size = "ISO_full_bleed_A3_(420.00_x_297.00_MM)"
+    for k in ("plot_layout_flags", "plot_type", "standard_scale_type", "current_style_sheet",
+              "plot_origin_x_offset", "plot_origin_y_offset", "limmin", "limmax"):
+        if k in a:
+            try:
+                uk.dxf_layout.dxf.set(k, a[k])
+            except (ezdxf.DXFAttributeError, ezdxf.DXFValueError):
+                pass
+    return uk
+
+
 def dodaj_uklady(doc: Drawing, szablon_doc: Drawing, szablon: SzablonUkladu,
                  arkusze: list[Arkusz], mianownik: int, nazwa_rysunku: str | None,
                  inwestor: str | None, opracowal: str | None, data: str | None,
@@ -336,38 +390,28 @@ def dodaj_uklady(doc: Drawing, szablon_doc: Drawing, szablon: SzablonUkladu,
     imp = Importer(szablon_doc, doc)
     nowe = []
     for ark in arkusze:
-        if ark.nazwa in doc.layouts:
-            doc.layouts.delete(ark.nazwa)
-        uk = doc.layouts.new(ark.nazwa)
-        for k, v in szablon.atrybuty_ukladu.items():
-            try:
-                uk.dxf_layout.dxf.set(k, v)
-            except (ezdxf.DXFAttributeError, ezdxf.DXFValueError):
-                pass
+        uk = _nowy_uklad(doc, ark.nazwa, szablon)
         imp.import_entities(szablon.encje, uk)
         nowe.append((uk, ark))
     imp.finalize()
 
-    bloki = {e.dxf.name for uk, _ in nowe for e in uk if e.dxftype() == "INSERT"}
-    for b in bloki:
-        if any(_bez_formatow(e.text).upper().startswith("INWESTOR")
-               for e in doc.blocks.get(b) if e.dxftype() == "MTEXT"):
-            uzupelnij_tabelke(doc, b, inwestor, opracowal, data)
-
     w, h = szablon.vp_rozmiar
+    x0p, y0p = szablon.vp_srodek[0] - w / 2, szablon.vp_srodek[1] - h / 2
+    styl = styl_arial(doc)
+    bloki = set()
     for uk, ark in nowe:
-        for e in uk:
-            if e.dxftype() != "MTEXT":
-                continue
-            rola = _rola_tekstu(e.text)
-            if rola == "nr":
-                _ustaw_mtext(e, ark.nazwa)
-            elif rola == "skala":
-                _ustaw_mtext(e, opis_skali(mianownik))
-            elif rola == "nazwa" and nazwa_rysunku:
-                _ustaw_mtext(e, nazwa_rysunku)
-            elif rola == "obiekt":
-                _ustaw_mtext(e, tekst_obiektu(e.text, ark.miejscowosci))
+        encje = [e for e in uk if e.dxftype() != "VIEWPORT"]
+        wypelnij_tabelke(encje, {
+            "Nr rysunku": ark.nazwa,
+            "Skala": opis_skali(mianownik),
+            "Nazwa rysunku": nazwa_rysunku,
+            "Obiekt": "§" + "|".join(ark.miejscowosci),
+            "INWESTOR": inwestor,
+            "Opracował": opracowal,
+            "Data": data,
+        })
+        ujednolic_teksty(doc, encje)
+        bloki |= {e.dxf.name for e in encje if e.dxftype() == "INSERT"}
         vp = uk.add_viewport(center=szablon.vp_srodek, size=(w, h),
                              view_center_point=(ark.x0 + ark.szer / 2, ark.y0 + ark.wys / 2),
                              view_height=ark.wys)
@@ -376,10 +420,12 @@ def dodaj_uklady(doc: Drawing, szablon_doc: Drawing, szablon: SzablonUkladu,
         if zamrozone:
             vp.frozen_layers = zamrozone
         for i, t in enumerate(dodatkowe_teksty or []):
-            x0 = szablon.vp_srodek[0] - w / 2
-            y0 = szablon.vp_srodek[1] - h / 2
-            uk.add_mtext(t, dxfattribs={"char_height": 1.8, "insert": (x0 + 3, y0 + 3 + i * 3),
-                                        "layer": "0"})
+            uk.add_mtext(t, dxfattribs={"char_height": 1.8, "style": styl, "layer": "0",
+                                        "insert": (x0p + 3, y0p + 3 + i * 3)})
+    for b in bloki:  # legenda itp.
+        blk = doc.blocks.get(b)
+        if blk is not None:
+            ujednolic_teksty(doc, blk)
 
 
 def rysuj_obrysy(doc: Drawing, arkusze: list[Arkusz], warstwa: str, drukowalna: bool,
@@ -392,10 +438,12 @@ def rysuj_obrysy(doc: Drawing, arkusze: list[Arkusz], warstwa: str, drukowalna: 
     msp = doc.modelspace()
     for e in list(msp.query(f'*[layer=="{warstwa}"]i')):
         msp.delete_entity(e)
+    styl = styl_arial(doc)
     for a in arkusze:
         msp.add_lwpolyline([(a.x0, a.y0), (a.x0 + a.szer, a.y0), (a.x0 + a.szer, a.y0 + a.wys),
                             (a.x0, a.y0 + a.wys)], close=True, dxfattribs={"layer": warstwa})
-        t = msp.add_mtext(a.nazwa, dxfattribs={"layer": warstwa, "char_height": wys_tekstu})
+        t = msp.add_mtext(a.nazwa, dxfattribs={"layer": warstwa, "char_height": wys_tekstu,
+                                                "style": styl})
         t.set_location((a.x0 + a.szer / 2, a.y0 + a.wys / 2),
                        attachment_point=ezdxf.enums.MTextEntityAlignment.MIDDLE_CENTER)
 

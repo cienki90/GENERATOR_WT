@@ -19,6 +19,9 @@ class Config:
     fragment_warstwy_opisu_trafo: str = "trafo"
     # Opisy słupów (MULTILEADER "słup nN\\P<typ>") - strzałka wskazuje słup
     prefiks_opisu_slupa: str = "słup"
+    # Numery słupów w sieci (np. 9, 9.1, 14.2) - teksty na warstwach o nazwie zaczynającej się od:
+    prefiks_warstwy_numerow: str = "_numery"
+    odl_numeru: float = 15.0   # maks. odległość tekstu numeru od słupa [m]
 
     # --- Numeracja w DXF (wygląd jak w numeracja_leader.dxf) ---
     warstwa_numeracji: str = "makro-numeracja-punktow"

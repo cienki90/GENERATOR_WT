@@ -18,6 +18,7 @@ Opcjonalnie `buduj_exe.bat` tworzy samodzielny `dist\Generator WT\Generator WT.e
    - scala wierzchołki leżące bliżej niż 5 m w jeden słup (błędne kliknięcia),
    - wyznacza strefy trafo z polilinii `!trafo`. Niezamknięte polilinie są domykane. Nazwa strefy to numer stacji z opisu (multileader „STACJA TRAFO 05-0792”). Obrysy bez opisu stacji dołączane są do strefy, z którą się stykają,
    - odczytuje rodzaj i typ słupa z opisów „słup nN / P-10/ZN”,
+   - odczytuje numery słupów w sieci (np. 9, 9.1) z tekstów na warstwach zaczynających się od `_numery`; identyfikator słupa ma postać `stacja/numer`, np. `05-0743/9.1`,
    - pobiera z GUGiK miejscowość, ulicę, gminę i działkę.
 2. **Zlecenie:** wybierz operatora i rejon domyślny. Rejon dobierany jest według gminy z listy w `dane/slowniki.xlsx`, a dla gmin spoza listy używany jest rejon domyślny. Listy edytujesz przyciskiem „Edytuj listy”.
 3. Sprawdź zakładki „Wykaz słupów” i „Kontrola projektu”. W wykazie możesz poprawić miejscowość, ulicę, gminę, rodzaj i typ słupa oraz uwagi.
@@ -36,8 +37,9 @@ W zakładce „Kontrola projektu” są wymienione przęsła dłuższe niż 55 m
 
 ### Arkusze 1:1000 (w pliku `*_numeracja.dxf`)
 
-- Układy papieru „1”, „2”, „3”… są tworzone z szablonu `szablony/arkusze_wt.dxf` (układ „a (2)”): format A3, kierunek N-S, bez obrotu, skala 1:1000.
+- Układy papieru „1”, „2”, „3”… są tworzone z szablonu `szablony/arkusze_wt.dxf` (układ „a (2)”; tabelka jako zwykłe linie i teksty, pola wyszukiwane po etykietach): format A3, kierunek N-S, bez obrotu, skala 1:1000.
 - Arkusze są układane wzdłuż trasy tak, żeby było ich jak najmniej. Sąsiednie arkusze mają zakładkę 50 m. Trasa nie wchodzi pod tabelkę i legendę w prawym dolnym rogu.
+- Każdy arkusz ma rzutnię papieru i ustawienia strony A3. Wszystkie teksty mają styl Arial (`WT_Arial`).
 - W tabelce program uzupełnia: inwestora (wybrany operator), opracował, datę, numer rysunku, skalę, miejscowości widoczne na arkuszu.
 - Obrysy arkuszy z numerami są w modelu na niedrukowalnej warstwie `WT_arkusze`.
 

@@ -41,7 +41,8 @@ class Wierzcholek:
     stacja_trafo: Optional[str] = None
     rodzaj_slupa: Optional[str] = None   # nN / SN
     typ_slupa: Optional[str] = None      # np. K-10,5/10/E
-    id_slupa: Optional[str] = None
+    id_slupa: Optional[str] = None       # stacja/numer, np. 05-0743/9.1
+    nr_w_sieci: Optional[str] = None     # numer słupa z rysunku (warstwa _numery...)
 
     miejscowosc: Optional[str] = None
     ulica: Optional[str] = None

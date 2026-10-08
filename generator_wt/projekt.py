@@ -39,6 +39,7 @@ class Projekt:
         self.plan: list[Wierzcholek] = []
         self.epsg: int | None = None
         self.opisanych_slupow = 0
+        self.numerow_w_sieci = 0
         self.tolerancja_analizy = self.cfg.tolerancja_slupa
         self.arkusze: list[ark.Arkusz] = []
         self._szablon_doc = None
@@ -53,6 +54,8 @@ class Projekt:
             raise ValueError(f"Brak polilinii na warstwie '{self.cfg.warstwa_tele}'.")
         self.stacje, self.ostrzezenia = reader.wczytaj_stacje_trafo(self.doc, self.cfg)
         self.opisanych_slupow = reader.przypisz_opisy_slupow(self.doc, self.slupy, self.cfg)
+        self.numerow_w_sieci, o = reader.przypisz_numery_slupow(self.doc, self.slupy, self.cfg)
+        self.ostrzezenia += o
         try:
             self.epsg = geocoder.wykryj_epsg(self.slupy[0].x)
         except ValueError as e:
@@ -68,6 +71,7 @@ class Projekt:
 
     def planuj(self) -> None:
         self.grupy = numbering.utworz_grupy(self.slupy, self.stacje, self.cfg)
+        reader.ustaw_id_slupow(self.slupy)
         self.plan = numbering.zaplanuj_numeracje(self.slupy, self.grupy, self.cfg)
 
     def przypisz_rejony(self, rejony: list[dict], domyslny: dict | None) -> list[str]:

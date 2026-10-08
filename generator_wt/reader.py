@@ -260,3 +260,56 @@ def kierunki_linii(slup: Wierzcholek, slupy: list[Wierzcholek]) -> list[float]:
     """Kąty [rad] odcinków linii wychodzących ze słupa."""
     return [math.atan2(slupy[n].y - slup.y, slupy[n].x - slup.x) for n in slup.sasiedzi]
 
+
+
+# ---------------------------------------------------------------- numery słupów w sieci
+
+def przypisz_numery_slupow(doc: Drawing, slupy: list[Wierzcholek], cfg: Config
+                           ) -> tuple[int, list[str]]:
+    """Teksty (TEXT/MTEXT) z warstw '_numery...' -> numer słupa w sieci.
+
+    Przypisanie jeden-do-jednego: pary tekst-słup sortowane wg odległości,
+    każdy słup i każdy tekst użyty co najwyżej raz (do cfg.odl_numeru).
+    Zwraca (liczba przypisanych, ostrzeżenia).
+    """
+    pref = cfg.prefiks_warstwy_numerow.casefold()
+    teksty = []
+    for e in doc.modelspace():
+        if not e.dxf.layer.casefold().startswith(pref):
+            continue
+        if e.dxftype() == "TEXT":
+            t, p = e.dxf.text.strip(), e.dxf.insert
+            if e.dxf.get("halign", 0) or e.dxf.get("valign", 0):
+                p = e.dxf.get("align_point", p)
+        elif e.dxftype() == "MTEXT":
+            t, p = _czysty_tekst(e.text).replace("\n", " ").strip(), e.dxf.insert
+        else:
+            continue
+        if t:
+            teksty.append((t, p.x, p.y))
+    pary = []
+    for i, (_, x, y) in enumerate(teksty):
+        for w in slupy:
+            d = math.hypot(w.x - x, w.y - y)
+            if d <= cfg.odl_numeru:
+                pary.append((d, i, w.id))
+    pary.sort()
+    uzyte_t, uzyte_s = set(), set()
+    for d, i, s in pary:
+        if i in uzyte_t or s in uzyte_s:
+            continue
+        uzyte_t.add(i)
+        uzyte_s.add(s)
+        slupy[s].nr_w_sieci = teksty[i][0]
+    ostrz = [f"Numer '{teksty[i][0]}' (warstwa {cfg.prefiks_warstwy_numerow}…) nie wskazuje "
+             f"żadnego słupa - X={teksty[i][2]:.2f} Y={teksty[i][1]:.2f}"
+             for i in range(len(teksty)) if i not in uzyte_t]
+    return len(uzyte_t), ostrz
+
+
+def ustaw_id_slupow(slupy: list[Wierzcholek]) -> None:
+    for w in slupy:
+        if w.nr_w_sieci:
+            w.id_slupa = f"{w.stacja_trafo}/{w.nr_w_sieci}" if w.stacja_trafo else w.nr_w_sieci
+        else:
+            w.id_slupa = None

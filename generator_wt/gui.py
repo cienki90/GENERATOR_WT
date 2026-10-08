@@ -62,6 +62,7 @@ QLabel#ostrz { color: #b35c00; }
 
 KOLUMNY = [  # (nagłówek, atrybut, edytowalna)
     ("Nr", "etykieta", False), ("Stacja trafo", "stacja_trafo", False),
+    ("Nr w sieci", "nr_w_sieci", True),
     ("Miejscowość", "miejscowosc", True), ("Ulica", "ulica", True), ("Gmina", "gmina", True),
     ("Rejon", "rejon_skrot", False), ("Rodzaj", "rodzaj_slupa", True),
     ("Typ słupa", "typ_slupa", True), ("X (2000)", "geo_x", False),
@@ -473,6 +474,9 @@ class OknoGlowne(QMainWindow):
         if atr == "gmina":
             p.przypisz_rejony(self.rejony, self.c_rejon.currentData())
             self._wypelnij_tabele()
+        elif atr == "nr_w_sieci":
+            from .reader import ustaw_id_slupow
+            ustaw_id_slupow(p.slupy)
         elif atr == "miejscowosc":
             p.planuj()  # grupowanie wg miejscowości mogło się zmienić
             self._wypelnij_tabele()
@@ -539,6 +543,14 @@ class OknoGlowne(QMainWindow):
         for a in p.arkusze:
             QTreeWidgetItem(ar, [f"Arkusz {a.nazwa}", ", ".join(a.miejscowosci) or "–"])
 
+        bez_nr = [w for w in p.plan if not w.nr_w_sieci]
+        ns = QTreeWidgetItem([f"Numery słupów w sieci ({self.cfg.prefiks_warstwy_numerow}…)",
+                              f"przypisano {p.numerow_w_sieci}, bez numeru {len(bez_nr)}"])
+        ns.setIcon(0, ikona(QStyle.SP_MessageBoxWarning if bez_nr else QStyle.SP_DialogApplyButton))
+        for w in bez_nr:
+            QTreeWidgetItem(ns, [f"Słup {w.etykieta}", f"{w.stacja_trafo or 'poza strefą'} · "
+                                 f"X={w.geo_x:.2f} Y={w.geo_y:.2f}"])
+
         bez_opisu = [w for w in p.plan if not w.rodzaj_slupa]
         op = QTreeWidgetItem(["Słupy bez opisu rodzaju/typu",
                               f"{len(bez_opisu)} (opisano {p.opisanych_slupow})"])
@@ -551,7 +563,7 @@ class OknoGlowne(QMainWindow):
             o.setIcon(0, ikona(QStyle.SP_MessageBoxWarning))
             for t in p.ostrzezenia:
                 QTreeWidgetItem(o, ["", t])
-        self.drzewo.addTopLevelItems([plan, bk, pr, ar, st, op] + ([o] if p.ostrzezenia else []))
+        self.drzewo.addTopLevelItems([plan, bk, pr, ar, st, ns, op] + ([o] if p.ostrzezenia else []))
         plan.setExpanded(True)
         bk.setExpanded(True)
         pr.setExpanded(True)
