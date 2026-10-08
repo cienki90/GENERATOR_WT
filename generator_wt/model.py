@@ -9,37 +9,39 @@ from shapely.geometry import Point, Polygon
 
 @dataclass
 class StacjaTrafo:
-    """Zasięg stacji transformatorowej (zamknięty obrys na warstwie !trafo)."""
+    """Zasięg stacji transformatorowej (zamknięta polilinia na warstwie !trafo)."""
     nazwa: str
     obrys: Polygon
-    punkt_stacji: Optional[Point] = None  # lokalizacja stacji (blok/punkt), jeśli jest
     kolejnosc_rysunku: int = 0
 
 
 @dataclass
 class Wierzcholek:
-    """Wierzchołek warstwy !tele - docelowo punkt zestawienia (np. słup)."""
+    """Wierzchołek linii !tele = słup."""
     id: int
-    x: float
-    y: float
-    # kolejność wystąpienia w rysunku: (nr obiektu, nr wierzchołka)
+    x: float  # współrzędna wschodnia w DXF (w geodezji: Y)
+    y: float  # współrzędna północna w DXF (w geodezji: X)
     kolejnosc_rysunku: tuple[int, int] = (0, 0)
 
-    # Uzupełniane podczas numeracji
+    # Numeracja
     nr: Optional[int] = None
     etykieta: str = ""
     grupa: str = ""  # nazwa stacji trafo lub miejscowości
 
-    # --- Pola przygotowane pod kolejne etapy ---
+    # Identyfikacja słupa
     stacja_trafo: Optional[str] = None
-    id_slupa: Optional[str] = None       # identyfikacja słupa powiązana ze stacją
+    id_slupa: Optional[str] = None
+
+    # Dane adresowe (geokodowanie)
     miejscowosc: Optional[str] = None
     ulica: Optional[str] = None
+    kod: Optional[str] = None
     gmina: Optional[str] = None
     powiat: Optional[str] = None
     wojewodztwo: Optional[str] = None
     obreb: Optional[str] = None
     dzialka: Optional[str] = None
+    rejon: Optional[str] = None
     uwagi: str = ""
 
     sasiedzi: set[int] = field(default_factory=set)
@@ -47,3 +49,12 @@ class Wierzcholek:
     @property
     def punkt(self) -> Point:
         return Point(self.x, self.y)
+
+    # Współrzędne w konwencji geodezyjnej (jak w piśmie: X = północna, Y = wschodnia)
+    @property
+    def geo_x(self) -> float:
+        return self.y
+
+    @property
+    def geo_y(self) -> float:
+        return self.x

@@ -2,3 +2,4 @@ __pycache__/
 *.pyc
 .venv/
 *_numeracja.dxf
+dane/cache_geokodowania.json

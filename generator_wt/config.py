@@ -1,14 +1,17 @@
-"""Ustawienia programu - nazwy warstw, parametry tekstów, tolerancje."""
+"""Ustawienia programu - nazwy warstw, parametry tekstów, tolerancje, ścieżki."""
 from dataclasses import dataclass
+from pathlib import Path
+
+KATALOG = Path(__file__).resolve().parent.parent
 
 
 @dataclass
 class Config:
-    # Warstwy wejściowe
+    # Warstwy wejściowe (polilinie; bloki są pomijane)
     warstwa_tele: str = "!tele"
     warstwa_trafo: str = "!trafo"
 
-    # Warstwa, na którą trafiają numery wierzchołków
+    # Warstwa, na którą trafiają numery słupów
     warstwa_numeracji: str = "!tele_nr"
 
     # Parametry tekstu numeru
@@ -17,13 +20,18 @@ class Config:
     przesuniecie_y: float = 0.8
     kolor_numeracji: int = 1  # 1 = czerwony (ACI)
 
-    # Wierzchołki bliżej niż tolerancja [m] traktujemy jako jeden punkt
+    # Wierzchołki bliżej niż tolerancja [m] traktujemy jako jeden słup
     tolerancja: float = 0.01
 
-    # Numer początkowy i prefiks (np. "S" -> S1, S2...)
     numer_startowy: int = 1
     prefiks: str = ""
 
-    # Nazwa grupy dla wierzchołków poza zasięgiem jakiejkolwiek stacji trafo
-    # (docelowo zostaną pogrupowane wg miejscowości - etap geokodowania)
-    grupa_poza_strefa: str = "POZA STREFĄ TRAFO"
+    # Grupa dla słupów poza strefami trafo, dla których nie ustalono miejscowości
+    grupa_nieznana: str = "NIEUSTALONA MIEJSCOWOŚĆ"
+
+    # Promień szukania najbliższego punktu adresowego [m]
+    promien_adresu: int = 300
+
+    # Szablony i słowniki
+    szablon_pisma: Path = KATALOG / "szablony" / "pismo_warunki.docx"
+    plik_slownikow: Path = KATALOG / "dane" / "slowniki.xlsx"

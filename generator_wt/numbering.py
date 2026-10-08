@@ -1,7 +1,15 @@
-"""Numeracja wierzchołków !tele z zachowaniem kolejności w obrębie stref trafo."""
+"""Numeracja wierzchołków !tele.
+
+Zasady:
+- numeracja ciągła 1..N, idzie wzdłuż trasy od słupa początkowego,
+- wierzchołki w zasięgu jednej stacji trafo (!trafo) mają numery kolejne,
+  bez przeplatania z innymi strefami,
+- wierzchołki poza strefami trafo są grupowane wg miejscowości,
+- kolejność grup = kolejność, w jakiej trasa do nich wchodzi.
+"""
 from __future__ import annotations
 
-import math
+from collections import OrderedDict
 from dataclasses import dataclass, field
 
 from shapely.geometry import Point
@@ -17,88 +25,93 @@ class Grupa:
     wierzcholki: list[Wierzcholek] = field(default_factory=list)
 
 
-def przypisz_do_grup(wierzcholki: list[Wierzcholek], stacje: list[StacjaTrafo],
-                     cfg: Config) -> list[Grupa]:
-    """Każdy wierzchołek trafia do strefy trafo, w której leży.
-
-    Jeśli strefy się nakładają - wygrywa najmniejsza (najbardziej szczegółowa).
-    Wierzchołki poza strefami trafiają do grupy 'poza strefą'
-    (w kolejnym etapie zostaną rozbite wg miejscowości).
-    """
-    stacje_wg_pola = sorted(stacje, key=lambda s: s.obrys.area)
-    grupy = {s.nazwa: Grupa(s.nazwa, s) for s in
-             sorted(stacje, key=lambda s: s.kolejnosc_rysunku)}
-    poza = Grupa(cfg.grupa_poza_strefa, None)
-
+def przypisz_strefy(wierzcholki: list[Wierzcholek], stacje: list[StacjaTrafo]) -> None:
+    """Przypisuje stację trafo (najmniejszą strefę, w której leży wierzchołek)."""
+    wg_pola = sorted(stacje, key=lambda s: s.obrys.area)
     for w in wierzcholki:
         p = Point(w.x, w.y)
-        stacja = next((s for s in stacje_wg_pola if s.obrys.covers(p)), None)
-        if stacja:
-            w.stacja_trafo = stacja.nazwa
-            w.grupa = stacja.nazwa
-            grupy[stacja.nazwa].wierzcholki.append(w)
-        else:
-            w.grupa = poza.nazwa
-            poza.wierzcholki.append(w)
+        s = next((s for s in wg_pola if s.obrys.covers(p)), None)
+        w.stacja_trafo = s.nazwa if s else None
 
-    wynik = [g for g in grupy.values() if g.wierzcholki]
-    if poza.wierzcholki:
-        wynik.append(poza)
+
+def _dfs(start: int, wszystkie: list[Wierzcholek], dozwolone: set[int],
+         odwiedzone: set[int]) -> list[int]:
+    """Przejście wzdłuż trasy; odgałęzienia w kolejności rysowania."""
+    wynik, stos = [], [start]
+    while stos:
+        i = stos.pop()
+        if i in odwiedzone:
+            continue
+        odwiedzone.add(i)
+        wynik.append(i)
+        nast = sorted((n for n in wszystkie[i].sasiedzi
+                       if n in dozwolone and n not in odwiedzone),
+                      key=lambda n: wszystkie[n].kolejnosc_rysunku, reverse=True)
+        stos.extend(nast)
     return wynik
 
 
-def _kolejnosc_w_grupie(grupa: Grupa, wszystkie: list[Wierzcholek]) -> list[Wierzcholek]:
-    """Ustala kolejność przejścia po trasie w obrębie grupy.
+def kolejnosc_trasy(wszystkie: list[Wierzcholek]) -> list[int]:
+    """Kolejność wszystkich wierzchołków wzdłuż trasy.
 
-    Idziemy wzdłuż linii (przeszukiwanie w głąb po grafie połączeń), zaczynając
-    od wierzchołka najbliższego stacji trafo; gdy jej brak - od końca linii,
-    który pojawił się w rysunku najwcześniej. Odgałęzienia numerowane są
-    po kolei, w kolejności rysowania.
+    Start: koniec linii (słup z jednym sąsiadem), który pojawia się w rysunku
+    najwcześniej - zwykle początek pierwszej narysowanej polilinii.
+    Każdy rozłączny fragment trasy jest przechodzony po kolei.
     """
-    w_grupie = {w.id for w in grupa.wierzcholki}
+    wszystkie_id = {w.id for w in wszystkie}
     odwiedzone: set[int] = set()
-    kolejnosc: list[Wierzcholek] = []
-    start_ref = grupa.stacja.punkt_stacji if grupa.stacja else None
-
-    def klucz_startu(w: Wierzcholek):
-        stopien = len(w.sasiedzi & w_grupie)
-        if start_ref is not None:
-            return (0, math.hypot(w.x - start_ref.x, w.y - start_ref.y))
-        # najpierw końce linii (stopień <= 1), potem kolejność rysunku
-        return (0 if stopien <= 1 else 1, w.kolejnosc_rysunku)
-
-    while len(odwiedzone) < len(w_grupie):
-        pozostale = [w for w in grupa.wierzcholki if w.id not in odwiedzone]
-        start = min(pozostale, key=klucz_startu)
-        stos = [start.id]
-        while stos:
-            idx = stos.pop()
-            if idx in odwiedzone:
-                continue
-            odwiedzone.add(idx)
-            kolejnosc.append(wszystkie[idx])
-            nastepne = sorted(
-                (n for n in wszystkie[idx].sasiedzi if n in w_grupie and n not in odwiedzone),
-                key=lambda n: wszystkie[n].kolejnosc_rysunku, reverse=True)
-            stos.extend(nastepne)
-    return kolejnosc
+    wynik: list[int] = []
+    while len(odwiedzone) < len(wszystkie):
+        pozostale = [w for w in wszystkie if w.id not in odwiedzone]
+        start = min(pozostale, key=lambda w: (len(w.sasiedzi) > 1, w.kolejnosc_rysunku))
+        wynik += _dfs(start.id, wszystkie, wszystkie_id, odwiedzone)
+    return wynik
 
 
-def zaplanuj_numeracje(wierzcholki: list[Wierzcholek], grupy: list[Grupa],
-                       cfg: Config, ciagla: bool = True) -> list[Wierzcholek]:
-    """Nadaje numery (bez zapisu do DXF). Zwraca wierzchołki w kolejności numerów.
+def utworz_grupy(wszystkie: list[Wierzcholek], stacje: list[StacjaTrafo],
+                 cfg: Config) -> list[Grupa]:
+    przypisz_strefy(wszystkie, stacje)
+    stacje_wg_nazwy = {s.nazwa: s for s in stacje}
+    # Strefa trafo = jedna grupa (nawet jeśli trasa z niej wychodzi i wraca).
+    # Poza strefami: kolejne odcinki trasy w tej samej miejscowości - nowa grupa
+    # przy każdej zmianie, żeby numery nie przeskakiwały wzdłuż trasy.
+    grupy: "OrderedDict[tuple, Grupa]" = OrderedDict()
+    poprz_klucz = None
+    nr_odcinka = 0
+    for i in kolejnosc_trasy(wszystkie):
+        w = wszystkie[i]
+        if w.stacja_trafo:
+            klucz = ("trafo", w.stacja_trafo)
+            nazwa = w.stacja_trafo
+        else:
+            nazwa = w.miejscowosc or cfg.grupa_nieznana
+            if poprz_klucz is None or poprz_klucz[:2] != ("miejsc", nazwa):
+                nr_odcinka += 1
+            klucz = ("miejsc", nazwa, nr_odcinka)
+        poprz_klucz = klucz
+        w.grupa = nazwa
+        if klucz not in grupy:
+            grupy[klucz] = Grupa(nazwa, stacje_wg_nazwy.get(w.stacja_trafo or ""))
+        grupy[klucz].wierzcholki.append(w)
+    return list(grupy.values())
 
-    ciagla=True  -> 1..N przez wszystkie strefy,
-    ciagla=False -> numeracja od nowa w każdej strefie.
-    """
+
+def zaplanuj_numeracje(wszystkie: list[Wierzcholek], grupy: list[Grupa],
+                       cfg: Config) -> list[Wierzcholek]:
+    """Nadaje numery ciągłe. Zwraca wierzchołki w kolejności numerów."""
     wynik: list[Wierzcholek] = []
     nr = cfg.numer_startowy
     for g in grupy:
-        if not ciagla:
-            nr = cfg.numer_startowy
-        for w in _kolejnosc_w_grupie(g, wierzcholki):
-            w.nr = nr
-            w.etykieta = f"{cfg.prefiks}{nr}"
-            wynik.append(w)
-            nr += 1
+        # g.wierzcholki są już w kolejności trasy - startujemy od wejścia trasy w grupę
+        dozwolone = {w.id for w in g.wierzcholki}
+        odwiedzone: set[int] = set()
+        for w in g.wierzcholki:
+            if w.id in odwiedzone:
+                continue
+            for i in _dfs(w.id, wszystkie, dozwolone, odwiedzone):
+                v = wszystkie[i]
+                v.nr = nr
+                v.etykieta = f"{cfg.prefiks}{nr}"
+                wynik.append(v)
+                nr += 1
     return wynik

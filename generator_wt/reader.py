@@ -34,11 +34,7 @@ def _punkty_obiektu(e) -> list[tuple[float, float]]:
         if e.is_closed and pts:
             pts.append(pts[0])
         return pts
-    if typ in ("POINT",):
-        return [(e.dxf.location.x, e.dxf.location.y)]
-    if typ == "INSERT":
-        return [(e.dxf.insert.x, e.dxf.insert.y)]
-    return []
+    return []  # bloki, punkty itp. są pomijane - słupy to wierzchołki linii
 
 
 class _IndeksWierzcholkow:
@@ -83,29 +79,15 @@ def wczytaj_wierzcholki_tele(doc: Drawing, cfg: Config) -> list[Wierzcholek]:
     return indeks.lista
 
 
-def _tekst_obiektu(e) -> str | None:
-    typ = e.dxftype()
-    if typ == "TEXT":
-        return e.dxf.text.strip()
-    if typ == "MTEXT":
-        return e.plain_text().strip()
-    if typ == "INSERT":
-        for a in e.attribs:
-            if a.dxf.text.strip():
-                return a.dxf.text.strip()
-    return None
-
-
 def wczytaj_stacje_trafo(doc: Drawing, cfg: Config) -> list[StacjaTrafo]:
-    """Zamknięte obrysy na warstwie !trafo = zasięgi stacji.
+    """Zamknięte polilinie na warstwie !trafo = zasięgi stacji.
 
-    Nazwa stacji jest brana z tekstu/bloku (z atrybutem) leżącego wewnątrz obrysu.
-    Blok lub punkt wewnątrz obrysu jest traktowany jako lokalizacja samej stacji
-    (od niej zaczyna się numeracja w danej strefie).
+    Nazwa stacji = tekst (TEXT/MTEXT) z warstwy !trafo leżący wewnątrz obrysu.
+    Bez tekstu strefa dostaje nazwę 'TRAFO n'.
     """
     msp = doc.modelspace()
     obrysy: list[tuple[int, Polygon]] = []
-    opisy: list[tuple[Point, str | None, bool]] = []  # (punkt, tekst, czy_to_stacja)
+    opisy: list[tuple[Point, str]] = []
 
     for nr, e in enumerate(msp):
         if not _ta_sama_warstwa(e, cfg.warstwa_trafo):
@@ -114,32 +96,23 @@ def wczytaj_stacje_trafo(doc: Drawing, cfg: Config) -> list[StacjaTrafo]:
         if typ in ("LWPOLYLINE", "POLYLINE"):
             pts = _punkty_obiektu(e)
             zamkniety = (e.closed if typ == "LWPOLYLINE" else e.is_closed) or (
-                len(pts) > 3 and math.dist(pts[0], pts[-1]) <= cfg.tolerancja
-            )
+                len(pts) > 3 and math.dist(pts[0], pts[-1]) <= cfg.tolerancja)
             if zamkniety and len(pts) >= 4:
                 poly = Polygon(pts)
                 if not poly.is_valid:
                     poly = poly.buffer(0)
                 obrysy.append((nr, poly))
-        elif typ in ("TEXT", "MTEXT"):
-            p = e.dxf.insert
-            opisy.append((Point(p.x, p.y), _tekst_obiektu(e), False))
-        elif typ in ("INSERT", "POINT", "CIRCLE"):
-            p = e.dxf.insert if typ == "INSERT" else (
-                e.dxf.location if typ == "POINT" else e.dxf.center)
-            tekst = _tekst_obiektu(e) if typ == "INSERT" else None
-            opisy.append((Point(p.x, p.y), tekst, True))
+        elif typ == "TEXT" and e.dxf.text.strip():
+            opisy.append((Point(e.dxf.insert.x, e.dxf.insert.y), e.dxf.text.strip()))
+        elif typ == "MTEXT" and e.plain_text().strip():
+            opisy.append((Point(e.dxf.insert.x, e.dxf.insert.y), e.plain_text().strip()))
 
     stacje: list[StacjaTrafo] = []
+    uzyte: set[str] = set()
     for i, (nr, poly) in enumerate(obrysy, start=1):
-        nazwa, punkt = None, None
-        for p, tekst, czy_stacja in opisy:
-            if poly.covers(p):
-                if tekst and nazwa is None:
-                    nazwa = tekst
-                if czy_stacja and punkt is None:
-                    punkt = p
-        stacje.append(StacjaTrafo(
-            nazwa=nazwa or f"TRAFO {i}", obrys=poly,
-            punkt_stacji=punkt, kolejnosc_rysunku=nr))
+        nazwa = next((t for p, t in opisy if poly.covers(p)), None) or f"TRAFO {i}"
+        if nazwa in uzyte:
+            nazwa = f"{nazwa} ({i})"
+        uzyte.add(nazwa)
+        stacje.append(StacjaTrafo(nazwa=nazwa, obrys=poly, kolejnosc_rysunku=nr))
     return stacje
