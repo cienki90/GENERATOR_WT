@@ -159,7 +159,8 @@ class Projekt:
             sz = ark.wczytaj_szablon(self.szablon_doc(), self.cfg.uklad_trasy)
             ark.dodaj_uklady(self.doc, self.szablon_doc(), sz, self.arkusze,
                              self.cfg.skala_arkuszy, None, self.tekst_inwestora(operator),
-                             opracowal, data, zamrozone=[self.cfg.warstwa_obrysow])
+                             opracowal, data, zamrozone=[self.cfg.warstwa_obrysow],
+                             wysokosc_branzy=self.cfg.wysokosc_branzy)
             ark.rysuj_obrysy(self.doc, self.arkusze, self.cfg.warstwa_obrysow,
                              drukowalna=False, wys_tekstu=20.0)
         self.doc.saveas(str(wyjscie))
@@ -218,7 +219,8 @@ class Projekt:
         domyslne = [n for n in doc.layouts.names() if n != "Model"]
         ark.dodaj_uklady(doc, szd, sz, orient, mianownik, self.cfg.nazwa_orientacji,
                          self.tekst_inwestora(operator), opracowal, data,
-                         dodatkowe_teksty=[podklad.ATRYBUCJA[pk.zrodlo]])
+                         dodatkowe_teksty=[podklad.ATRYBUCJA[pk.zrodlo]],
+                         wysokosc_branzy=self.cfg.wysokosc_branzy)
         for n in domyslne:  # pusty układ 'Layout1' tworzony przez ezdxf
             doc.layouts.delete(n)
         doc.saveas(str(wyjscie))

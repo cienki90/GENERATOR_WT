@@ -370,6 +370,36 @@ def wypelnij_tabelke(encje, wartosci: dict[str, str | None]) -> None:
             _ustaw_mtext(e, wartosc)
 
 
+def _wysrodkuj_w_komorce(e, encje) -> None:
+    """Przesuwa tekst (wyrównany do środka) na środek komórki między pionowymi liniami."""
+    x, y = e.dxf.insert.x, e.dxf.insert.y
+    pionowe = []
+    for g in encje:
+        odc = []
+        if g.dxftype() == "LINE":
+            odc = [(g.dxf.start, g.dxf.end)]
+        elif g.dxftype() == "LWPOLYLINE":
+            p = [ezdxf.math.Vec3(q[0], q[1], 0) for q in g.get_points("xy")]
+            odc = list(zip(p, p[1:] + (p[:1] if g.closed else [])))
+        for a, b in odc:
+            if abs(a.x - b.x) < 0.01 and min(a.y, b.y) <= y <= max(a.y, b.y):
+                pionowe.append(a.x)
+    lewa = max((v for v in pionowe if v < x), default=None)
+    prawa = min((v for v in pionowe if v > x), default=None)
+    if lewa is not None and prawa is not None and e.dxf.attachment_point in (2, 5, 8):
+        e.dxf.insert = ((lewa + prawa) / 2, y, e.dxf.insert.z)
+
+
+def ustaw_branze(encje, wysokosc: float) -> None:
+    mt = [e for e in encje if e.dxftype() == "MTEXT"]
+    e = pole_tabelki(mt, "Branża")
+    if e is None:
+        return
+    e.dxf.char_height = wysokosc
+    e.text = re.sub(r"\\H[\d.]+x?;", "", e.text)
+    _wysrodkuj_w_komorce(e, encje)
+
+
 # ====================================================================== tworzenie układów
 
 @dataclass
@@ -432,7 +462,8 @@ def dodaj_uklady(doc: Drawing, szablon_doc: Drawing, szablon: SzablonUkladu,
                  arkusze: list[Arkusz], mianownik: int, nazwa_rysunku: str | None,
                  inwestor: str | None, opracowal: str | None, data: str | None,
                  dodatkowe_teksty: list[str] | None = None,
-                 zamrozone: list[str] | None = None) -> None:
+                 zamrozone: list[str] | None = None,
+                 wysokosc_branzy: float | None = None) -> None:
     """Tworzy układy papieru (po jednym na arkusz) na wzór układu szablonu."""
     imp = Importer(szablon_doc, doc)
     nowe = []
@@ -458,6 +489,8 @@ def dodaj_uklady(doc: Drawing, szablon_doc: Drawing, szablon: SzablonUkladu,
             "Data": data,
         })
         ujednolic_teksty(doc, encje)
+        if wysokosc_branzy:
+            ustaw_branze(encje, wysokosc_branzy)
         bloki |= {e.dxf.name for e in encje if e.dxftype() == "INSERT"}
         vp = uk.add_viewport(center=szablon.vp_srodek, size=(w, h),
                              view_center_point=(ark.x0 + ark.szer / 2, ark.y0 + ark.wys / 2),

@@ -63,6 +63,7 @@ class Config:
     margines_mm: float = 10.0             # odstęp trasy od ramki i tabelki [mm papieru]
     margines_orientacji_mm: float = 5.0
     warstwa_obrysow: str = "WT_arkusze"   # obrysy arkuszy w modelu (niedrukowalna)
+    wysokosc_branzy: float = 1.75         # tekst w polu "Branża:" tabelki [mm]
     nazwa_orientacji: str = "Plan orientacyjny - układ arkusza"
     warstwa_trasy_orientacji: str = "WT_trasa"
     warstwa_podkladu: str = "WT_podklad"
