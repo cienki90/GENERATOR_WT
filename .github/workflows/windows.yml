@@ -3,10 +3,8 @@ name: Wersja Windows (.exe)
 # Buduje samodzielny program dla Windows (bez instalacji Pythona), testuje go
 # i publikuje jako paczkę ZIP w zakładce "Releases" (wydanie "najnowsza-wersja").
 
+# Uruchamiane tylko ręcznie: GitHub -> Actions -> "Wersja Windows (.exe)" -> Run workflow
 on:
-  push:
-    branches: [etap-1-numeracja, main]
-    paths-ignore: ["**.md"]
   workflow_dispatch:
 
 permissions:

@@ -11,7 +11,8 @@ from PySide6.QtCore import QDate, QObject, QSettings, Qt, QThread, Signal
 from PySide6.QtCore import QPointF, QRectF
 from PySide6.QtGui import QBrush, QColor, QFont, QPainter, QPen
 from PySide6.QtWidgets import (
-    QAbstractItemView, QApplication, QCheckBox, QComboBox, QDateEdit, QDoubleSpinBox,
+    QAbstractItemView, QApplication, QCheckBox, QComboBox, QDateEdit, QDialog,
+    QDialogButtonBox, QDoubleSpinBox,
     QFileDialog, QFormLayout, QFrame, QGroupBox, QHBoxLayout, QHeaderView, QLabel,
     QLineEdit, QMainWindow, QMessageBox, QPlainTextEdit, QProgressBar, QPushButton,
     QScrollArea, QSpinBox, QSplitter, QStyle, QTableWidget, QTableWidgetItem, QTabWidget,
@@ -160,6 +161,118 @@ class PodgladArkuszy(QWidget):
             p.drawText(r, Qt.AlignCenter, a.nazwa)
 
 
+class DialogOperatora(QDialog):
+    """Dodawanie / aktualizacja operatora po numerze NIP (GUS lub biała lista MF + RPT UKE)."""
+
+    POLA_REJESTRU = ("Pełna nazwa", "Adres (siedziba)", "Kod pocztowy", "Regon",
+                     "Numer wpisu do RPT")
+
+    def __init__(self, parent, operatorzy: list[dict], ustawienia: QSettings):
+        super().__init__(parent)
+        from . import slowniki
+        self.operatorzy = operatorzy
+        self.ustawienia = ustawienia
+        self.setWindowTitle("Dodaj operatora po NIP")
+        self.setMinimumWidth(560)
+        uk = QVBoxLayout(self)
+
+        rz = QHBoxLayout()
+        self.e_nip = QLineEdit(placeholderText="np. 822-234-93-74")
+        self.b_pobierz = QPushButton(self.style().standardIcon(QStyle.SP_ArrowDown),
+                                     " Pobierz z rejestrów", objectName="akcent")
+        self.b_pobierz.clicked.connect(self.pobierz)
+        self.e_nip.returnPressed.connect(self.pobierz)
+        rz.addWidget(QLabel("NIP:"))
+        rz.addWidget(self.e_nip, 1)
+        rz.addWidget(self.b_pobierz)
+        uk.addLayout(rz)
+
+        self.l_info = QLabel("Dane adresowe: GUS (gdy podano klucz) albo biała lista MF; "
+                             "numer RPT: rejestr UKE.", objectName="info", wordWrap=True)
+        uk.addWidget(self.l_info)
+
+        g = QGroupBox("Dane operatora (możesz poprawić przed zapisem)")
+        f = QFormLayout(g)
+        self.pola: dict[str, QLineEdit] = {}
+        for k in slowniki.KOLUMNY_OPERATORA:
+            e = QLineEdit()
+            if k == "Nazwa":
+                e.setPlaceholderText("krótka nazwa na liście wyboru")
+            self.pola[k] = e
+            f.addRow(k + ":", e)
+        uk.addWidget(g)
+
+        g2 = QGroupBox("Klucz GUS (opcjonalnie)")
+        f2 = QHBoxLayout(g2)
+        self.e_klucz = QLineEdit(ustawienia.value("klucz_gus", ""),
+                                 placeholderText="bez klucza dane pochodzą z białej listy MF")
+        self.e_klucz.setToolTip("Bezpłatny klucz do API REGON wydaje GUS "
+                                "(api.stat.gov.pl → API REGON).")
+        f2.addWidget(self.e_klucz)
+        uk.addWidget(g2)
+
+        przyc = QDialogButtonBox(QDialogButtonBox.Save | QDialogButtonBox.Cancel)
+        przyc.button(QDialogButtonBox.Save).setText("Zapisz na liście")
+        przyc.button(QDialogButtonBox.Cancel).setText("Anuluj")
+        przyc.accepted.connect(self.zapisz)
+        przyc.rejected.connect(self.reject)
+        uk.addWidget(przyc)
+        self.wpis: dict | None = None
+
+    def _istniejacy(self, nip: str) -> dict | None:
+        import re
+        return next((o for o in self.operatorzy
+                     if re.sub(r"\D", "", o.get("NIP", "")) == nip), None)
+
+    def pobierz(self):
+        from . import rejestry
+        klucz = self.e_klucz.text().strip()
+        self.ustawienia.setValue("klucz_gus", klucz)
+        QApplication.setOverrideCursor(Qt.WaitCursor)
+        try:
+            w = rejestry.operator_po_nip(self.e_nip.text(), klucz or None)
+        except Exception as e:  # noqa: BLE001
+            QApplication.restoreOverrideCursor()
+            QMessageBox.warning(self, "NIP", str(e))
+            return
+        QApplication.restoreOverrideCursor()
+        info = list(w.pop("_info", []))
+        stary = self._istniejacy(w["NIP"])
+        if stary:
+            # zachowaj pola wpisane ręcznie, podmień tylko dane z rejestrów
+            nowy = dict(stary)
+            for k in self.POLA_REJESTRU + ("NIP",):
+                if w.get(k):
+                    nowy[k] = w[k]
+            info.insert(0, f"Operator '{stary.get('Nazwa')}' jest już na liście – "
+                           "zapis zaktualizuje dane z rejestrów.")
+            w = nowy
+        for k, e in self.pola.items():
+            e.setText(w.get(k, ""))
+            e.setStyleSheet("")
+        for k in self.POLA_REJESTRU:
+            if stary and stary.get(k, "") != w.get(k, ""):
+                self.pola[k].setStyleSheet("background:#fff3cd;")
+                self.pola[k].setToolTip(f"Było: {stary.get(k, '') or '–'}")
+        self.l_info.setText("<br>".join(info))
+        self.adjustSize()
+        self.wpis = w
+
+    def zapisz(self):
+        from . import rejestry
+        if not self.pola["Nazwa"].text().strip() or not self.pola["NIP"].text().strip():
+            QMessageBox.warning(self, "Operator", "Uzupełnij co najmniej nazwę i NIP.")
+            return
+        try:
+            nip = rejestry.oczysc_nip(self.pola["NIP"].text())
+        except rejestry.BladRejestru as e:
+            QMessageBox.warning(self, "Operator", str(e))
+            return
+        self.wpis = {k: e.text().strip() for k, e in self.pola.items()}
+        self.wpis["NIP"] = nip
+        self.accept()
+
+
 class OknoGlowne(QMainWindow):
     def __init__(self):
         super().__init__()
@@ -244,6 +357,10 @@ class OknoGlowne(QMainWindow):
         rz.addWidget(b_edytuj)
         rz.addWidget(b_odsw)
         f2.addRow(rz)
+        b_nip = QPushButton(ikona(QStyle.SP_FileDialogNewFolder), " Dodaj operatora po NIP…")
+        b_nip.setToolTip("Pobiera nazwę i adres (GUS / biała lista MF) oraz numer RPT (UKE)")
+        b_nip.clicked.connect(self.dodaj_operatora)
+        f2.addRow(b_nip)
         ll.addWidget(g2)
 
         g3 = QGroupBox("3. Numeracja")
@@ -435,6 +552,21 @@ class OknoGlowne(QMainWindow):
             combo.setCurrentIndex(max(idx, 0))
             combo.blockSignals(False)
         self._rejon_zmieniony()
+
+    def dodaj_operatora(self):
+        from . import slowniki
+        dlg = DialogOperatora(self, self.operatorzy, self.ustawienia)
+        if dlg.exec() != QDialog.Accepted or not dlg.wpis:
+            return
+        try:
+            stan = slowniki.zapisz_operatora(self.cfg.plik_slownikow, dlg.wpis)
+        except PermissionError:
+            QMessageBox.warning(self, "Operator", "Plik list jest otwarty w Excelu – zamknij go "
+                                "i spróbuj ponownie.")
+            return
+        self.log(f"Operator {dlg.wpis['Nazwa']}: {stan} w {self.cfg.plik_slownikow.name}")
+        self.ustawienia.setValue("operator", dlg.wpis["Nazwa"])
+        self.wczytaj_slowniki()
 
     def edytuj_slowniki(self):
         self._otworz(self.cfg.plik_slownikow)

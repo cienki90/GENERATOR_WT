@@ -104,3 +104,36 @@ def nazwa_skrocona(rejon: dict[str, str] | None) -> str | None:
     if not rejon:
         return None
     return rejon.get("Nazwa skrócona") or rejon.get("Nazwa")
+
+
+def zapisz_operatora(plik: Path, wpis: dict[str, str]) -> str:
+    """Dopisuje operatora do arkusza 'Operatorzy' albo aktualizuje wiersz z tym samym NIP.
+    Brakujące kolumny są dopisywane na końcu nagłówka. Zwraca 'dodano' / 'zaktualizowano'."""
+    wb = load_workbook(plik)
+    ws = wb[ARKUSZ_OPERATORZY]
+    nagl = [str(c.value).strip() if c.value is not None else "" for c in ws[1]]
+    for k in wpis:
+        if k.startswith("_") or k in nagl:
+            continue
+        nagl.append(k)
+        c = ws.cell(1, len(nagl), k)
+        c.font = Font(bold=True)
+        c.fill = PatternFill("solid", fgColor="DDEBF7")
+        ws.column_dimensions[c.column_letter].width = 30
+    kol = {n: i + 1 for i, n in enumerate(nagl) if n}
+    nip = re.sub(r"\D", "", wpis.get("NIP", ""))
+    wiersz, stan = None, "dodano"
+    if nip and "NIP" in kol:
+        for r in range(2, ws.max_row + 1):
+            if re.sub(r"\D", "", str(ws.cell(r, kol["NIP"]).value or "")) == nip:
+                wiersz, stan = r, "zaktualizowano"
+                break
+    if wiersz is None:
+        wiersz = ws.max_row + 1
+        while wiersz > 2 and not any(ws.cell(wiersz - 1, k).value for k in kol.values()):
+            wiersz -= 1
+    for k, v in wpis.items():
+        if k in kol and (v or stan == "dodano"):
+            ws.cell(wiersz, kol[k], v)
+    wb.save(plik)
+    return stan
