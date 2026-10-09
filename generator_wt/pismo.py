@@ -97,7 +97,9 @@ def _tabela_slupow(d: docx.Document) -> Table:
     raise ValueError("Nie znaleziono tabeli wykazu słupów (nagłówek 'L.p.').")
 
 
-def wypelnij_tabele(t: Table, slupy: list[Wierzcholek]) -> None:
+def wypelnij_tabele(t: Table, slupy: list[Wierzcholek], cfg=None) -> None:
+    wgs = bool(cfg and cfg.wgs84)
+    m2, mw = (cfg.miejsca_po_przecinku, cfg.miejsca_wgs84) if cfg else (2, 7)
     wzor = copy.deepcopy(t.rows[1]._tr)
     for r in list(t.rows)[1:]:
         t._tbl.remove(r._tr)
@@ -106,14 +108,15 @@ def wypelnij_tabele(t: Table, slupy: list[Wierzcholek]) -> None:
         t._tbl.append(tr)
         wiersz = t.rows[-1]
         wartosci = [str(lp), w.rejon or "", w.gmina or "", w.miejscowosc or "",
-                    w.ulica or "-", f"{w.geo_x:.2f}", f"{w.geo_y:.2f}"]
+                    w.ulica or "-"] + [f"{v:.{mw if wgs else m2}f}"
+                                       for v in w.wspolrzedne(wgs, m2, mw)]
         for kom, txt in zip(wiersz.cells, wartosci):
             _ustaw_komorke(kom, txt)
 
 
 def generuj_pismo(szablon: Path, wyjscie: Path, slupy: list[Wierzcholek],
                   operator: dict[str, str] | None, data_od: str | None = None,
-                  data_do: str = "-") -> None:
+                  data_do: str = "-", cfg=None) -> None:
     d = docx.Document(str(szablon))
     par = d.paragraphs
 
@@ -151,5 +154,5 @@ def generuj_pismo(szablon: Path, wyjscie: Path, slupy: list[Wierzcholek],
         else:
             _ustaw_tekst(p, f"Łączna ilość Słupów elektroenergetycznych: {len(slupy)}")
 
-    wypelnij_tabele(_tabela_slupow(d), slupy)
+    wypelnij_tabele(_tabela_slupow(d), slupy, cfg)
     d.save(str(wyjscie))

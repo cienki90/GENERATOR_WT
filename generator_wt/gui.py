@@ -276,8 +276,9 @@ class OknoGlowne(QMainWindow):
         self.cb_pismo = QCheckBox("Pismo – zapytanie o dostęp (*_pismo.docx)")
         self.cb_rozb = QCheckBox("Zestawienie rozbudowane (*_rozbudowana.xlsx)")
         self.cb_upr = QCheckBox("Zestawienie uproszczone (*_uproszczona.xls)")
+        self.cb_proj = QCheckBox("Tabela projektowa (*_tabela_projektowa.xlsx)")
         for c in (self.cb_dxf, self.cb_arkusze, self.cb_pismo, self.cb_rozb, self.cb_upr,
-                  self.cb_orient):
+                  self.cb_proj, self.cb_orient):
             c.setChecked(True)
             f4.addWidget(c)
             if c is self.cb_arkusze:
@@ -697,6 +698,23 @@ class OknoGlowne(QMainWindow):
             self.log("Przerwano – nic nie zapisano.")
             return
 
+        if self.cb_pismo.isChecked() or self.cb_rozb.isChecked() or self.cb_upr.isChecked():
+            pyt = QMessageBox(QMessageBox.Question, "Układ współrzędnych",
+                              "Czy przeliczyć współrzędne słupów w piśmie i zestawieniach "
+                              "na układ WGS 84 (szerokość, długość)?\n\n"
+                              "Nie = układ PL-2000 projektu."
+                              + ("\n\nTabela projektowa zawsze ma współrzędne GPS (WGS 84)."
+                                 if self.cb_proj.isChecked() else ""), parent=self)
+            b_tak = pyt.addButton("Tak, WGS 84", QMessageBox.YesRole)
+            pyt.addButton("Nie, PL-2000", QMessageBox.NoRole)
+            b_anuluj = pyt.addButton("Anuluj", QMessageBox.RejectRole)
+            pyt.exec()
+            if pyt.clickedButton() is b_anuluj:
+                self.log("Przerwano – nic nie zapisano.")
+                return
+            p.cfg.wgs84 = pyt.clickedButton() is b_tak
+            self.log("Współrzędne w zestawieniach: " + ("WGS 84" if p.cfg.wgs84 else "PL-2000"))
+
         operator = self.c_operator.currentData()
         opracowal = self.e_opracowal.text().strip() or None
         data_rys = self.e_data_rys.text().strip() or None
@@ -715,6 +733,8 @@ class OknoGlowne(QMainWindow):
             zadania.append(("rozbudowana.xlsx", p.zapisz_rozbudowana))
         if self.cb_upr.isChecked():
             zadania.append(("uproszczona.xls", p.zapisz_uproszczona))
+        if self.cb_proj.isChecked():
+            zadania.append(("tabela_projektowa.xlsx", p.zapisz_projektowa))
 
         if self.cb_orient.isChecked():
             def orient(f):

@@ -28,8 +28,12 @@ def main(argv=None) -> int:
     ap = argparse.ArgumentParser(description="Numeracja słupów warstwy !tele i zestawienia")
     ap.add_argument("dxf")
     ap.add_argument("--katalog", help="folder wyników (domyślnie folder projektu)")
-    ap.add_argument("--zestawienie", choices=["rozbudowana", "uproszczona", "oba", "brak"],
-                    default="oba")
+    ap.add_argument("--zestawienie", nargs="+", default=["wszystkie"],
+                    choices=["rozbudowana", "uproszczona", "projektowa", "oba", "wszystkie",
+                             "brak"],
+                    help="rodzaje zestawień (można podać kilka)")
+    ap.add_argument("--wgs84", action="store_true",
+                    help="współrzędne w zestawieniach i piśmie w WGS 84 zamiast PL-2000")
     ap.add_argument("--operator")
     ap.add_argument("--rejon", help="rejon domyślny dla gmin spoza listy")
     ap.add_argument("--od")
@@ -49,7 +53,8 @@ def main(argv=None) -> int:
     ap.add_argument("--tak", action="store_true", help="nie pytaj o potwierdzenie")
     a = ap.parse_args(argv)
 
-    cfg = Config(prefiks=a.prefiks, numer_startowy=a.start, tolerancja_slupa=a.tolerancja)
+    cfg = Config(prefiks=a.prefiks, numer_startowy=a.start, tolerancja_slupa=a.tolerancja,
+                 wgs84=a.wgs84)
     p = Projekt(cfg)
     p.wczytaj(a.dxf)
     print(f"Słupów: {len(p.slupy)}, stref trafo: {len(p.stacje)}, "
@@ -99,10 +104,13 @@ def main(argv=None) -> int:
     zad = [("numeracja.dxf", lambda f: p.zapisz_dxf(f, not a.bez_arkuszy, operator,
                                                     a.opracowal, a.data_rysunku)),
            ("pismo.docx", lambda f: p.zapisz_pismo(f, operator, a.od, a.do))]
-    if a.zestawienie in ("rozbudowana", "oba"):
+    z = set(a.zestawienie)
+    if z & {"rozbudowana", "oba", "wszystkie"}:
         zad.append(("rozbudowana.xlsx", p.zapisz_rozbudowana))
-    if a.zestawienie in ("uproszczona", "oba"):
+    if z & {"uproszczona", "oba", "wszystkie"}:
         zad.append(("uproszczona.xls", p.zapisz_uproszczona))
+    if z & {"projektowa", "wszystkie"}:
+        zad.append(("tabela_projektowa.xlsx", p.zapisz_projektowa))
     if a.orientacja:
         zad.append(("orientacja.dxf", lambda f: p.zapisz_orientacje(
             f, a.orientacja, a.szarosc, operator, a.opracowal, a.data_rysunku, a.podklad)))

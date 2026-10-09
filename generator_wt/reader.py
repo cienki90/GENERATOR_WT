@@ -38,6 +38,11 @@ def _punkty(e) -> list[tuple[float, float]]:
     return []  # bloki, punkty itp. są pomijane
 
 
+def jest_warstwa_trafo(warstwa: str, cfg: Config) -> bool:
+    w = warstwa.casefold()
+    return w == cfg.warstwa_trafo.casefold() or w.startswith(cfg.prefiks_warstwy_trafo.casefold())
+
+
 # ---------------------------------------------------------------- słupy
 
 class _UnionFind:
@@ -161,7 +166,7 @@ def _opisy_trafo(doc: Drawing, cfg: Config) -> list[tuple[Point, str]]:
 
 
 def wczytaj_stacje_trafo(doc: Drawing, cfg: Config) -> tuple[list[StacjaTrafo], list[str]]:
-    """Strefy trafo z polilinii !trafo.
+    """Strefy trafo z polilinii na warstwie !trafo i warstwach '_trafo...'.
 
     - polilinie niezamknięte są domykane (zgodnie z praktyką rysowania obrysów),
     - nazwa strefy = numer stacji, której opis (grot multileadera / tekst) leży w obrysie,
@@ -171,7 +176,7 @@ def wczytaj_stacje_trafo(doc: Drawing, cfg: Config) -> tuple[list[StacjaTrafo], 
     ostrz: list[str] = []
     obrysy: list[tuple[int, Polygon, str]] = []
     for nr, e in enumerate(doc.modelspace()):
-        if not _warstwa(e, cfg.warstwa_trafo) or e.dxftype() not in ("LWPOLYLINE", "POLYLINE"):
+        if not jest_warstwa_trafo(e.dxf.layer, cfg) or e.dxftype() not in ("LWPOLYLINE", "POLYLINE"):
             continue
         pts = _punkty(e)
         if pts and pts[0] == pts[-1]:

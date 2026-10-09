@@ -53,6 +53,8 @@ class Wierzcholek:
     obreb: Optional[str] = None
     dzialka: Optional[str] = None
     rejon: Optional[str] = None
+    lat: Optional[float] = None   # WGS 84
+    lon: Optional[float] = None
     rejon_skrot: Optional[str] = None
     uwagi: str = ""
 
@@ -61,6 +63,13 @@ class Wierzcholek:
     @property
     def punkt(self) -> Point:
         return Point(self.x, self.y)
+
+    def wspolrzedne(self, wgs84: bool, miejsca_2000: int = 2, miejsca_wgs: int = 7
+                    ) -> tuple[float, float]:
+        """(X, Y) PL-2000 albo (szerokość, długość) WGS 84 - w kolejności jak w zestawieniach."""
+        if wgs84 and self.lat is not None:
+            return round(self.lat, miejsca_wgs), round(self.lon, miejsca_wgs)
+        return round(self.geo_x, miejsca_2000), round(self.geo_y, miejsca_2000)
 
     @property
     def geo_x(self) -> float:

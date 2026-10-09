@@ -70,6 +70,15 @@ class Projekt:
                               plik_cache=self.cfg.plik_slownikow.parent / "cache_geokodowania.json")
         return geocoder.uzupelnij(self.slupy, g, postep=postep)
 
+    def przelicz_wgs84(self) -> None:
+        """Współrzędne słupów w WGS 84 (EPSG:4326)."""
+        if self.epsg is None:
+            raise ValueError("Nie rozpoznano układu współrzędnych projektu.")
+        from pyproj import Transformer
+        t = Transformer.from_crs(self.epsg, 4326, always_xy=True)
+        for w in self.slupy:
+            w.lon, w.lat = t.transform(w.x, w.y)
+
     def planuj(self) -> None:
         self.grupy = numbering.utworz_grupy(self.slupy, self.stacje, self.cfg)
         reader.ustaw_id_slupow(self.slupy)
@@ -244,13 +253,24 @@ class Projekt:
         doc.saveas(str(wyjscie))
         return orient
 
+    def _wgs_jesli_trzeba(self, zawsze: bool = False) -> None:
+        if (self.cfg.wgs84 or zawsze) and any(w.lat is None for w in self.slupy):
+            self.przelicz_wgs84()
+
     def zapisz_pismo(self, wyjscie: Path, operator: dict | None, data_od: str | None,
                      data_do: str = "-") -> None:
+        self._wgs_jesli_trzeba()
         pismo.generuj_pismo(self.cfg.szablon_pisma, wyjscie, self.plan, operator,
-                            data_od, data_do)
+                            data_od, data_do, self.cfg)
 
     def zapisz_rozbudowana(self, wyjscie: Path) -> None:
+        self._wgs_jesli_trzeba()
         export.zapisz_rozbudowane(self.plan, wyjscie, self.cfg, self.epsg)
 
     def zapisz_uproszczona(self, wyjscie: Path) -> None:
+        self._wgs_jesli_trzeba()
         export.zapisz_uproszczone(self.plan, wyjscie, self.cfg, self.epsg)
+
+    def zapisz_projektowa(self, wyjscie: Path) -> None:
+        self._wgs_jesli_trzeba(zawsze=True)  # kolumna "Współrzędne GPS" - zawsze WGS 84
+        export.zapisz_projektowa(self.plan, wyjscie, self.cfg)

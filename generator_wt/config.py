@@ -15,6 +15,7 @@ class Config:
     # --- Warstwy wejściowe (nazwy bez rozróżniania wielkości liter) ---
     warstwa_tele: str = "!tele"     # polilinie, wierzchołek = słup
     warstwa_trafo: str = "!trafo"   # obrysy zasięgu stacji trafo
+    prefiks_warstwy_trafo: str = "_trafo"  # ...oraz warstwy o nazwie zaczynającej się od
     # Opisy stacji: MULTILEADER/TEXT/MTEXT na warstwach zawierających ten fragment
     fragment_warstwy_opisu_trafo: str = "trafo"
     # Opisy słupów (MULTILEADER "słup nN\\P<typ>") - strzałka wskazuje słup
@@ -50,6 +51,9 @@ class Config:
     grupa_nieznana: str = "NIEUSTALONA MIEJSCOWOŚĆ"
     promien_adresu: int = 300
     miejsca_po_przecinku: int = 2
+    # Współrzędne w zestawieniach i piśmie: False = PL-2000 (X, Y), True = WGS 84 (szer., dł.)
+    wgs84: bool = False
+    miejsca_wgs84: int = 7
 
     # Domyślne wartości kolumn zestawienia rozbudowanego
     linie_swiatlowodowe: int = 1
@@ -72,6 +76,7 @@ class Config:
     # --- Pliki ---
     szablon_pisma: Path = field(default_factory=lambda: KATALOG / "szablony" / "pismo_warunki.docx")
     szablon_rozbudowana: Path = field(default_factory=lambda: KATALOG / "szablony" / "rozbudowana.xlsx")
+    szablon_projektowa: Path = field(default_factory=lambda: KATALOG / "szablony" / "tabela_projektowa.xlsx")
     szablon_uproszczona: Path = field(default_factory=lambda: KATALOG / "szablony" / "uproszczona.xls")
     szablon_arkuszy: Path = field(default_factory=lambda: KATALOG / "szablony" / "arkusze_wt.dxf")
     katalog_kafli: Path = field(default_factory=lambda: KATALOG / "dane" / "kafle")

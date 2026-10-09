@@ -2,6 +2,8 @@
 
 rozbudowana.xlsx  - arkusz 'Zał.1': nagłówek (wiersze 1-3) z szablonu, wiersze danych
                     formatowane jak pierwszy wiersz danych szablonu, stopka z liczbą słupów.
+tabela_projektowa.xlsx - Lp, miejscowość, ulica, gmina, stacja, nr słupa, GPS (WGS 84),
+                    liczba kabli, rodzaj słupa - formatowanie z szablonu.
 uproszczona.xls   - układ jak w szablonie (Załącznik nr 4, wykaz, stopka z podpisami);
                     teksty nagłówka są czytane z szablonu, plik budowany od nowa (xlwt).
 """
@@ -21,7 +23,12 @@ from .model import Wierzcholek
 STREFY = {2176: 5, 2177: 6, 2178: 7, 2179: 8}
 
 
-def _opis_ukladu(tekst: str, epsg: int | None) -> str:
+OPIS_WGS = "Współrzędne w układzie WGS 84 (szerokość, długość)"
+
+
+def _opis_ukladu(tekst: str, epsg: int | None, wgs84: bool = False) -> str:
+    if wgs84:
+        return OPIS_WGS
     if epsg in STREFY:
         return re.sub(r"str\.\s*\d", f"str. {STREFY[epsg]}", tekst)
     return tekst
@@ -47,13 +54,14 @@ def zapisz_rozbudowane(slupy: list[Wierzcholek], plik: Path, cfg: Config,
         if zakres.min_row >= wiersz_wzor:
             ws.unmerge_cells(str(zakres))
     ws.delete_rows(wiersz_wzor, ws.max_row - wiersz_wzor + 1)
-    ws["F3"] = _opis_ukladu(ws["F3"].value or "", epsg)
+    ws["F3"] = _opis_ukladu(ws["F3"].value or "", epsg, cfg.wgs84)
 
-    fmt = f"{{:.{cfg.miejsca_po_przecinku}f}}"
+    fmt = f"{{:.{cfg.miejsca_wgs84 if cfg.wgs84 else cfg.miejsca_po_przecinku}f}}"
     for lp, w in enumerate(slupy, start=1):
         r = wiersz_wzor + lp - 1
+        wx, wy = w.wspolrzedne(cfg.wgs84, cfg.miejsca_po_przecinku, cfg.miejsca_wgs84)
         wartosci = [lp, _rejon(w), w.gmina or "", w.miejscowosc or "", w.ulica or "-",
-                    fmt.format(w.geo_x), fmt.format(w.geo_y), None, w.stacja_trafo or "",
+                    fmt.format(wx), fmt.format(wy), None, w.stacja_trafo or "",
                     w.rodzaj_slupa or "", cfg.linie_swiatlowodowe, cfg.linie_abonenckie]
         for k, v in enumerate(wartosci, start=1):
             c = ws.cell(r, k, v)
@@ -128,7 +136,10 @@ def zapisz_uproszczone(slupy: list[Wierzcholek], plik: Path, cfg: Config,
     wys(2, 525)
     for k, n in enumerate(t["naglowki"][:5]):
         ws.write(3, k, n, st_nagl)
-    ws.write_merge(3, 3, 5, 6, _opis_ukladu(t["naglowki"][5], epsg), st_nagl)
+    ws.write_merge(3, 3, 5, 6, _opis_ukladu(t["naglowki"][5], epsg, cfg.wgs84), st_nagl)
+    if cfg.wgs84:
+        st_num = xlwt.easyxf("font: name Calibri, height 220;" + sr + ramka,
+                             num_format_str="0." + "0" * cfg.miejsca_wgs84)
     wys(3, 660)
 
     for i, w in enumerate(slupy):
@@ -138,8 +149,9 @@ def zapisz_uproszczone(slupy: list[Wierzcholek], plik: Path, cfg: Config,
         ws.write(r, 2, w.gmina or "", st_txt)
         ws.write(r, 3, w.miejscowosc or "", st_txt)
         ws.write(r, 4, w.ulica or "-", st_txt)
-        ws.write(r, 5, round(w.geo_x, cfg.miejsca_po_przecinku), st_num)
-        ws.write(r, 6, round(w.geo_y, cfg.miejsca_po_przecinku), st_num)
+        wx, wy = w.wspolrzedne(cfg.wgs84, cfg.miejsca_po_przecinku, cfg.miejsca_wgs84)
+        ws.write(r, 5, wx, st_num)
+        ws.write(r, 6, wy, st_num)
         wys(r, 300)
 
     r = 4 + len(slupy)
@@ -155,3 +167,41 @@ def zapisz_uproszczone(slupy: list[Wierzcholek], plik: Path, cfg: Config,
     ws.set_panes_frozen(True)
     ws.set_horz_split_pos(4)
     wb.save(str(plik))
+
+
+# ------------------------------------------------------------------ tabela projektowa
+
+def zapisz_projektowa(slupy: list[Wierzcholek], plik: Path, cfg: Config) -> None:
+    """Tabela projektowa wg szablonu: nagłówek (wiersz 1) z szablonu, wiersze danych
+    formatowane jak pierwszy wiersz danych. Współrzędne GPS zawsze w WGS 84."""
+    wb = load_workbook(cfg.szablon_projektowa)
+    ws = wb.worksheets[0]
+    wzor = 2
+    styl = {c.column: copy.copy(c._style) for c in ws[wzor]}
+    wys = ws.row_dimensions[wzor].height
+    for zakres in list(ws.merged_cells.ranges):
+        if zakres.min_row >= wzor:
+            ws.unmerge_cells(str(zakres))
+    if ws.max_row >= wzor:
+        ws.delete_rows(wzor, ws.max_row - wzor + 1)
+    for lp, w in enumerate(slupy, start=1):
+        r = wzor + lp - 1
+        lat, lon = w.wspolrzedne(True, cfg.miejsca_po_przecinku, cfg.miejsca_wgs84)
+        nr = w.nr_w_sieci or w.etykieta
+        try:
+            nr = int(nr)  # "51" -> 51, "9.1" zostaje tekstem
+        except (TypeError, ValueError):
+            pass
+        wartosci = [lp, w.miejscowosc or "", w.ulica or "-", w.gmina or "",
+                    w.stacja_trafo or "", nr, lat, lon, cfg.linie_swiatlowodowe,
+                    cfg.linie_abonenckie or None, w.rodzaj_slupa or ""]
+        for k, v in enumerate(wartosci, start=1):
+            c = ws.cell(r, k, v)
+            if k in styl:
+                c._style = copy.copy(styl[k])
+            if k in (7, 8):
+                c.number_format = "0." + "0" * cfg.miejsca_wgs84
+        ws.row_dimensions[r].height = wys
+    ws.freeze_panes = "A2"
+    ws.print_title_rows = "1:1"
+    wb.save(plik)
