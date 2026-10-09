@@ -13,3 +13,5 @@ dane/cache_geokodowania.json
 build/
 dist/
 *.spec
+*_orientacja_*.jpg
+*_orientacja_*.jgw

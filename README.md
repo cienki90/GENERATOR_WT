@@ -47,7 +47,9 @@ W zakładce „Kontrola projektu” są wymienione przęsła dłuższe niż 55 m
 
 - Oddzielny plik z podkładem OSM. Zapasowo, albo jeśli to wybierzesz, używana jest mapa topograficzna GUGiK. Podkład może być w kolorze lub w odcieniach szarości.
 - Plan zawiera obrysy arkuszy z numerami, trasę (opcjonalnie) oraz arkusze A3 „0.A”, „0.B”… w skali 1:10 000 lub 1:25 000. Nazwa rysunku: „Plan orientacyjny - układ arkusza”.
-- Obraz JPG jest podpięty do DXF ścieżką względną. Przenoś go razem z plikiem DXF. Plik `.jgw` to georeferencja.
+- Kafle są pobierane tylko dla widoku arkuszy orientacji z zapasem 10 mm papieru (`zapas_podkladu_mm` w `config.py`).
+- Arkusze orientacji, których widoki się stykają lub nakładają, mają jeden wspólny obraz. Arkusze rozłączne mają osobne obrazy: `*_orientacja_1.jpg`, `*_orientacja_2.jpg`…
+- Obrazy JPG są podpięte do DXF ścieżką względną. Przenoś je razem z plikiem DXF. Pliki `.jgw` to georeferencja.
 
 ## Pliki
 

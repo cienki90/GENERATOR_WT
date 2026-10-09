@@ -166,20 +166,24 @@ def _wybierz_ilp(M: np.ndarray, log=None) -> list[int] | None:
         from scipy.sparse import csr_matrix
     except ImportError:
         return None
+    koszt = M.sum(axis=1).astype(float)
+    # wszystko mieści się na jednym arkuszu - bez solvera
+    pelne = np.nonzero(M.all(axis=1))[0]
+    if len(pelne):
+        return [int(pelne[np.argmin(koszt[pelne])])]
     A = np.unique(M.T.astype(np.int8), axis=0)
     n = M.shape[0]
     pokrycie = LinearConstraint(csr_matrix(A), lb=1, ub=np.inf)
-    opcje = {"time_limit": 60}
     r1 = milp(c=np.ones(n), constraints=[pokrycie], integrality=np.ones(n),
-              bounds=Bounds(0, 1), options=opcje)
+              bounds=Bounds(0, 1), options={"time_limit": 30})
     if r1.x is None:
         return None
     k = int(round(r1.x.sum()))
     # etap 2: tyle samo arkuszy, jak najmniej wspólnych fragmentów trasy
+    # (krótki limit czasu - jeśli nie zdąży, zostaje wynik etapu 1)
     liczba = LinearConstraint(np.ones((1, n)), lb=k, ub=k)
-    koszt = M.sum(axis=1).astype(float)
     r2 = milp(c=koszt, constraints=[pokrycie, liczba], integrality=np.ones(n),
-              bounds=Bounds(0, 1), options=opcje)
+              bounds=Bounds(0, 1), options={"time_limit": 10})
     x = r2.x if r2.x is not None else r1.x
     return [int(j) for j in np.nonzero(x > 0.5)[0]]
 
@@ -208,6 +212,28 @@ def _wybierz_zachlannie(M: np.ndarray) -> list[int]:
 def rozmiesc(linie: list[LineString], W: float, H: float, zakazane, margines: float,
              zakladka: float, krok: float = 15.0, gestosc: float = 5.0
              ) -> list[tuple[float, float]]:
+    """Dzieli trasę na skupiska, które nie mogą trafić na wspólny arkusz
+    (odległość większa niż przekątna arkusza) i rozmieszcza arkusze w każdym osobno."""
+    if not linie:
+        return []
+    r = math.hypot(W, H) / 2
+    bufory = [ls.buffer(r) for ls in linie]
+    grupy: list[list[int]] = []
+    for i, b in enumerate(bufory):
+        laczy = [g for g in grupy if any(bufory[j].intersects(b) for j in g)]
+        nowa = sorted([i] + [j for g in laczy for j in g])
+        grupy = [g for g in grupy if g not in laczy] + [nowa]
+    grupy.sort(key=min)  # kolejność wg trasy (linie są w kolejności numeracji)
+    wynik = []
+    for g in grupy:
+        wynik += _rozmiesc_skupisko([linie[j] for j in g], W, H, zakazane, margines,
+                                    zakladka, krok, gestosc)
+    return wynik
+
+
+def _rozmiesc_skupisko(linie: list[LineString], W: float, H: float, zakazane,
+                       margines: float, zakladka: float, krok: float, gestosc: float
+                       ) -> list[tuple[float, float]]:
     """Zwraca lewe dolne narożniki arkuszy (w układzie modelu) pokrywających linie.
 
     W, H, zakazane, margines, zakladka - w metrach terenu.
@@ -290,8 +316,9 @@ def rozmiesc(linie: list[LineString], W: float, H: float, zakazane, margines: fl
             cel = (cx - sx, cy - sy)
             x0, y0 = ark[a]
             prop = []
-            for dx in np.arange(-W / 2, W / 2 + 1e-9, 5.0):
-                for dy in np.arange(-H / 2, H / 2 + 1e-9, 5.0):
+            kc = max(5.0, W / 80)  # krok przesuwania (5 m dla 1:1000, ~50 m dla 1:10 000)
+            for dx in np.arange(-W / 2, W / 2 + 1e-9, kc):
+                for dy in np.arange(-H / 2, H / 2 + 1e-9, kc):
                     nx, ny = x0 + dx, y0 + dy
                     if shapely.contains_xy(uzyt, P[moje, 0] - nx, P[moje, 1] - ny).all():
                         prop.append((math.hypot(nx - cel[0], ny - cel[1]), nx, ny))

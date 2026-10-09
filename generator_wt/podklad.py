@@ -19,6 +19,7 @@ import numpy as np
 import requests
 from PIL import Image
 from pyproj import Transformer
+from shapely.geometry import Polygon, box
 
 OSM_URL = "https://tile.openstreetmap.org/{z}/{x}/{y}.png"
 GUGIK_WMS = "https://mapy.geoportal.gov.pl/wss/service/img/guest/TOPO/MapServer/WMSServer"
@@ -67,7 +68,7 @@ def _pobierz_kafel(sesja, z, x, y, katalog: Path | None) -> Image.Image | None:
     return None
 
 
-def _osm(bbox, epsg, zoom, katalog_kafli, postep) -> tuple[np.ndarray, float]:
+def _osm(bbox, epsg, zoom, katalog_kafli, postep, obszar=None) -> tuple[np.ndarray, float]:
     xmin, ymin, xmax, ymax = bbox
     do_merc = Transformer.from_crs(epsg, 3857, always_xy=True)
     # obwiednia w Web Mercator (zagęszczone krawędzie)
@@ -82,6 +83,17 @@ def _osm(bbox, epsg, zoom, katalog_kafli, postep) -> tuple[np.ndarray, float]:
     ty0 = int((POL_OBW - max(my)) / (2 * POL_OBW) * n)
     ty1 = int((POL_OBW - min(my)) / (2 * POL_OBW) * n)
     kafle = [(x, y) for x in range(tx0, tx1 + 1) for y in range(ty0, ty1 + 1)]
+    if obszar is not None:  # tylko kafle w widoku arkuszy (+ zapas)
+        do_proj = Transformer.from_crs(3857, epsg, always_xy=True)
+        bok = 2 * POL_OBW / n
+
+        def w_obszarze(xy):
+            mx0 = xy[0] * bok - POL_OBW
+            my1 = POL_OBW - xy[1] * bok
+            px, py = do_proj.transform([mx0, mx0 + bok, mx0 + bok, mx0],
+                                       [my1, my1, my1 - bok, my1 - bok])
+            return Polygon(zip(px, py)).intersects(obszar)
+        kafle = [k for k in kafle if w_obszarze(k)]
     if len(kafle) > 2500:
         raise ValueError(f"Za duży obszar podkładu ({len(kafle)} kafli).")
 
@@ -139,7 +151,7 @@ def _osm(bbox, epsg, zoom, katalog_kafli, postep) -> tuple[np.ndarray, float]:
 
 # ------------------------------------------------------------------ GUGiK WMS
 
-def _gugik(bbox, epsg, rozdz, postep) -> tuple[np.ndarray, float]:
+def _gugik(bbox, epsg, rozdz, postep, obszar=None) -> tuple[np.ndarray, float]:
     xmin, ymin, xmax, ymax = bbox
     W = int(math.ceil((xmax - xmin) / rozdz))
     H = int(math.ceil((ymax - ymin) / rozdz))
@@ -150,6 +162,10 @@ def _gugik(bbox, epsg, rozdz, postep) -> tuple[np.ndarray, float]:
     wynik = Image.new("RGB", (W, H), "white")
     kaf = 2000
     zad = [(c, r) for r in range(0, H, kaf) for c in range(0, W, kaf)]
+    if obszar is not None:
+        zad = [(c, r) for c, r in zad if box(
+            xmin + c * rozdz, ymax - (r + min(kaf, H - r)) * rozdz,
+            xmin + (c + min(kaf, W - c)) * rozdz, ymax - r * rozdz).intersects(obszar)]
     sesja = requests.Session()
     sesja.headers["User-Agent"] = USER_AGENT
     for i, (c, r) in enumerate(zad, 1):
@@ -173,20 +189,23 @@ def _gugik(bbox, epsg, rozdz, postep) -> tuple[np.ndarray, float]:
 
 def pobierz(bbox, epsg: int, mianownik: int, plik_jpg: Path, szarosc: bool = False,
             zrodlo: str = "osm", katalog_kafli: Path | None = None, postep=None,
-            log=print) -> Podklad:
+            log=print, obszar=None) -> Podklad:
     """Pobiera podkład dla obwiedni bbox (xmin, ymin, xmax, ymax) w układzie EPSG projektu.
 
     zrodlo: 'osm' (z automatycznym przejściem na GUGiK przy błędzie) lub 'gugik'.
+    obszar: wielokąt (układ projektu) - pobierane są tylko kafle, które go przecinają;
+            reszta obrazu pozostaje pusta (poza widokiem arkuszy).
     """
     uzyte = zrodlo
     if zrodlo == "osm":
         try:
-            obraz, rozdz = _osm(bbox, epsg, zoom_dla_skali(mianownik), katalog_kafli, postep)
+            obraz, rozdz = _osm(bbox, epsg, zoom_dla_skali(mianownik), katalog_kafli, postep,
+                                obszar)
         except Exception as e:  # noqa: BLE001
             log(f"OSM niedostępny ({e}) - używam mapy topograficznej GUGiK.")
             uzyte = "gugik"
     if uzyte == "gugik":
-        obraz, rozdz = _gugik(bbox, epsg, mianownik / 10000 * 1.0 * 1.5, postep)
+        obraz, rozdz = _gugik(bbox, epsg, mianownik / 10000 * 1.5, postep, obszar)
 
     img = Image.fromarray(obraz)
     if szarosc:

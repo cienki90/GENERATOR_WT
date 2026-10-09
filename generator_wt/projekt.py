@@ -18,7 +18,8 @@ from ezdxf.document import Drawing
 import string
 
 import ezdxf
-from shapely.geometry import LineString
+from shapely.geometry import LineString, box
+from shapely.ops import unary_union
 
 from . import arkusze as ark
 from . import dxf_writer, export, geocoder, numbering, pismo, podklad, reader, slowniki
@@ -196,14 +197,31 @@ class Projekt:
         doc.header["$INSUNITS"] = 6
         msp = doc.modelspace()
 
-        xmin, ymin, xmax, ymax = ark.obwiednia(orient)
-        plik_jpg = Path(wyjscie).with_suffix(".jpg")
-        pk = podklad.pobierz((xmin, ymin, xmax, ymax), self.epsg, mianownik, plik_jpg,
-                             szarosc, zrodlo, self.cfg.katalog_kafli, postep, log)
+        # podkład tylko w widokach arkuszy (+ zapas); arkusze, których obszary się
+        # łączą -> jeden obraz, rozłączne -> osobne obrazy
+        zapas = self.cfg.zapas_podkladu_mm * k
+        obszary = [box(a.x0 - zapas, a.y0 - zapas, a.x0 + a.szer + zapas, a.y0 + a.wys + zapas)
+                   for a in orient]
+        grupy: list[list[int]] = []
+        for i, o in enumerate(obszary):
+            laczy = [g for g in grupy if any(obszary[j].intersects(o) for j in g)]
+            nowa = [i] + [j for g in laczy for j in g]
+            grupy = [g for g in grupy if g not in laczy] + [sorted(nowa)]
+        grupy.sort()
         doc.layers.add(self.cfg.warstwa_podkladu, color=7)
-        idef = doc.add_image_def(filename=plik_jpg.name, size_in_pixel=pk.piks)
-        msp.add_image(idef, insert=(pk.x0, pk.y0), size_in_units=(pk.szer_m, pk.wys_m),
-                      dxfattribs={"layer": self.cfg.warstwa_podkladu})
+        zrodla = []
+        for n, g in enumerate(grupy, start=1):
+            obszar = unary_union([obszary[j] for j in g])
+            przyr = "" if len(grupy) == 1 else f"_{n}"
+            plik_jpg = Path(wyjscie).with_name(Path(wyjscie).stem + przyr + ".jpg")
+            if len(grupy) > 1:
+                log(f"Podkład {n}/{len(grupy)} (arkusze {', '.join(orient[j].nazwa for j in g)})")
+            pk = podklad.pobierz(obszar.bounds, self.epsg, mianownik, plik_jpg, szarosc, zrodlo,
+                                 self.cfg.katalog_kafli, postep, log, obszar=obszar)
+            zrodla.append(pk.zrodlo)
+            idef = doc.add_image_def(filename=plik_jpg.name, size_in_pixel=pk.piks)
+            msp.add_image(idef, insert=(pk.x0, pk.y0), size_in_units=(pk.szer_m, pk.wys_m),
+                          dxfattribs={"layer": self.cfg.warstwa_podkladu})
         doc.set_raster_variables(frame=0, quality=1, units="m")
 
         if trasa:
@@ -219,7 +237,7 @@ class Projekt:
         domyslne = [n for n in doc.layouts.names() if n != "Model"]
         ark.dodaj_uklady(doc, szd, sz, orient, mianownik, self.cfg.nazwa_orientacji,
                          self.tekst_inwestora(operator), opracowal, data,
-                         dodatkowe_teksty=[podklad.ATRYBUCJA[pk.zrodlo]],
+                         dodatkowe_teksty=[podklad.ATRYBUCJA[z] for z in dict.fromkeys(zrodla)],
                          wysokosc_branzy=self.cfg.wysokosc_branzy)
         for n in domyslne:  # pusty układ 'Layout1' tworzony przez ezdxf
             doc.layouts.delete(n)
