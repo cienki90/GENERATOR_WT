@@ -395,15 +395,17 @@ def szerokosc_tekstu(tekst: str, wysokosc: float, wsp_szer: float = 1.0) -> floa
 
 
 def zawin(tekst: str, wysokosc: float, szer: float) -> list[str]:
-    linie, akt = [], ""
-    for slowo in tekst.split():
-        prob = f"{akt} {slowo}".strip()
-        if akt and szerokosc_tekstu(prob, wysokosc) > szer:
-            linie.append(akt)
-            akt = slowo
-        else:
-            akt = prob
-    if akt:
+    """Zawijanie na słowach; jawne podziały wierszy (\\n) są zachowane."""
+    linie = []
+    for akapit in tekst.split("\n"):
+        akt = ""
+        for slowo in akapit.split():
+            prob = f"{akt} {slowo}".strip()
+            if akt and szerokosc_tekstu(prob, wysokosc) > szer:
+                linie.append(akt)
+                akt = slowo
+            else:
+                akt = prob
         linie.append(akt)
     return linie
 
@@ -413,11 +415,16 @@ def wysokosc_bloku(n_linii: int, wysokosc: float, rozstaw: float) -> float:
     return wysokosc + (n_linii - 1) * ROZSTAW_CAD * rozstaw * wysokosc + 0.3 * wysokosc
 
 
+def _srodkowy(e) -> bool:
+    return e.dxf.attachment_point in (2, 5, 8)
+
+
 def _komorka_pod(e, encje) -> tuple[float, float]:
-    """(dostępna szerokość, dostępna wysokość) dla MTEXT od jego punktu wstawienia
-    do najbliższej linii poziomej poniżej i pionowej z prawej."""
+    """(dostępna szerokość, dostępna wysokość) dla MTEXT: od punktu wstawienia do
+    najbliższej linii poziomej poniżej; szerokość do linii pionowej z prawej, a dla
+    tekstu wyśrodkowanego - między liniami po obu stronach (tekst jest centrowany)."""
     x, y = e.dxf.insert.x, e.dxf.insert.y
-    poziome, pionowe = [], []
+    poziome, lewe, prawe = [], [], []
     for g in encje:
         odc = []
         if g.dxftype() == "LINE":
@@ -428,26 +435,44 @@ def _komorka_pod(e, encje) -> tuple[float, float]:
         for a, b in odc:
             if abs(a.y - b.y) < 0.01 and a.y < y - 0.1 and min(a.x, b.x) <= x + 1 <= max(a.x, b.x):
                 poziome.append(a.y)
-            if abs(a.x - b.x) < 0.01 and a.x > x + 1 and min(a.y, b.y) <= y - 1 <= max(a.y, b.y):
-                pionowe.append(a.x)
+            if abs(a.x - b.x) < 0.01 and min(a.y, b.y) <= y - 1 <= max(a.y, b.y):
+                if a.x > x + 1:
+                    prawe.append(a.x)
+                elif a.x < x - 1:
+                    lewe.append(a.x)
     dol = max(poziome, default=y - 10)
-    prawa = min(pionowe, default=x + (e.dxf.get("width", 0) or 80))
-    szer = prawa - x - 0.8
-    if e.dxf.get("width", 0):
-        szer = min(szer, e.dxf.width)
+    prawa = min(prawe, default=x + (e.dxf.get("width", 0) or 80))
+    if _srodkowy(e) and lewe:
+        lewa = max(lewe)
+        e.dxf.insert = ((lewa + prawa) / 2, y, e.dxf.insert.z)
+        szer = prawa - lewa - 1.6
+    else:
+        szer = prawa - x - 0.8
+        if e.dxf.get("width", 0):
+            szer = min(szer, e.dxf.width)
     return szer, y - dol - 0.6
 
 
 def dopasuj_tekst(e, encje, tekst: str, h_maks: float | None = None, h_min: float = 1.3,
-                  log=None) -> str:
+                  log=None, skracaj: bool = True) -> str:
     """Wpisuje 'tekst' do MTEXT tak, by zmieścił się w komórce tabelki: najpierw zmniejsza
-    odstęp linii, potem wysokość tekstu (do h_min). Jeśli dalej się nie mieści,
-    skraca listę po ostatnim przecinku ("..., A, B i in."). Zwraca wpisany tekst."""
+    odstęp linii, potem wysokość tekstu (do h_min). Jeśli dalej się nie mieści i
+    skracaj=True, skraca listę po ostatnim przecinku ("..., A, B i in.").
+    Zwraca wpisany tekst."""
     szer, wys = _komorka_pod(e, encje)
     szer *= 0.97  # zapas na różnice w renderowaniu czcionki między programami CAD
     h0 = h_maks or e.dxf.char_height
     m = re.search(r"\\px[^;]*sm([\d.]+)", e.text)
     rozstaw0 = float(m.group(1)) if m else (e.dxf.get("line_spacing_factor", 1.0) or 1.0)
+    wyrown = "qc" if _srodkowy(e) else "ql"
+
+    def wpisz(kand, h, rozstaw):
+        e.dxf.char_height = round(h, 2)
+        e.text = re.sub(r"\\px[^;]*;", "", e.text)
+        _ustaw_mtext(e, kand)
+        e.text = f"\\pxsm{rozstaw:g},{wyrown};" + e.text
+        e.dxf.width = szer
+
     kandydat = tekst
     while True:
         h = h0
@@ -457,20 +482,17 @@ def dopasuj_tekst(e, encje, tekst: str, h_maks: float | None = None, h_min: floa
                 linie = zawin(kandydat, h, szer)
                 if all(szerokosc_tekstu(l, h) <= szer for l in linie) and \
                         wysokosc_bloku(len(linie), h, rozstaw) <= wys:
-                    e.dxf.char_height = round(h, 2)
-                    tresc = re.sub(r"\\px[^;]*;", "", e.text)
-                    e.text = tresc
-                    _ustaw_mtext(e, kandydat)
-                    e.text = f"\\pxsm{rozstaw:g},ql;" + e.text
-                    e.dxf.width = szer
+                    wpisz(kandydat, h, rozstaw)
                     if log and (h < h0 - 1e-9 or kandydat != tekst):
-                        log(f"Tabelka: tekst '{kandydat[:40]}…' wpisano wys. {h:.2f}"
-                            + (" (skrócony)" if kandydat != tekst else ""))
+                        log(f"Tabelka: tekst '{kandydat.splitlines()[0][:40]}…' wpisano "
+                            f"wys. {h:.2f}" + (" (skrócony)" if kandydat != tekst else ""))
                     return kandydat
             h -= 0.05
-        if "," not in kandydat:
-            _ustaw_mtext(e, kandydat)  # nie da się lepiej - zostaw najmniejszy
-            e.dxf.char_height = h_min
+        if not skracaj or "," not in kandydat:
+            wpisz(kandydat, h_min, min(rozstaw0, 0.9))  # nie da się lepiej
+            if log:
+                log(f"Tabelka: tekst '{kandydat.splitlines()[0][:40]}…' może nie mieścić się "
+                    "w komórce – sprawdź rysunek.")
             return kandydat
         glowa = kandydat.rsplit(",", 1)[0].removesuffix(" i in.")
         kandydat = glowa + " i in."
@@ -508,6 +530,8 @@ def wypelnij_tabelke(encje, wartosci: dict[str, str | None], log=None) -> None:
         if etykieta.lower() == "obiekt" and wartosc.startswith("§"):
             lista = [x for x in wartosc[1:].split("|") if x]
             dopasuj_tekst(e, encje, tekst_obiektu(e.text, lista), log=log)
+        elif etykieta.lower() == "inwestor":
+            dopasuj_tekst(e, encje, wartosc, log=log, skracaj=False)
         else:
             _ustaw_mtext(e, wartosc)
 
