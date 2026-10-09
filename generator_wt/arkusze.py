@@ -19,7 +19,6 @@ import shapely
 from ezdxf import bbox
 from ezdxf.addons import Importer
 from ezdxf.document import Drawing
-from shapely import affinity
 from shapely.geometry import LineString, Point, box
 from shapely.ops import unary_union
 
@@ -251,14 +250,20 @@ def _rozmiesc_skupisko(linie: list[LineString], W: float, H: float, zakazane,
     4. numeracja arkuszy wzdłuż trasy.
     """
     uzyt = _obszar_uzytkowy(W, H, zakazane, margines)
-    shapely.prepare(uzyt)
     sx, sy = uzyt.centroid.x, uzyt.centroid.y
     P, ch, T = _probkuj(linie, gestosc)
     if not len(P):
         return []
+    zx0, zy1 = zakazane[0] - margines, zakazane[3] + margines
+
+    def w_uzyt(px, py):
+        """Czy punkty (współrzędne względem narożnika arkusza) leżą w obszarze użytkowym.
+        Szybka wersja testu 'uzyt.contains' - obszar to prostokąt bez prawego dolnego rogu."""
+        return ((px > margines) & (px < W - margines) & (py > margines) & (py < H - margines)
+                & ~((px > zx0) & (py < zy1)))
 
     def pokrycie(x0: float, y0: float) -> np.ndarray:
-        wew = shapely.contains_xy(uzyt, P[:, 0] - x0, P[:, 1] - y0)
+        wew = w_uzyt(P[:, 0] - x0, P[:, 1] - y0)
         if not wew.any() or zakladka <= 0:
             return wew
         wyn = wew.copy()
@@ -285,11 +290,17 @@ def _rozmiesc_skupisko(linie: list[LineString], W: float, H: float, zakazane,
     while brak.any():
         i = int(np.argmax(brak))
         x0, y0 = P[i, 0] - sx, P[i, 1] - sy
-        r = shapely.contains_xy(uzyt, P[:, 0] - x0, P[:, 1] - y0)
+        r = w_uzyt(P[:, 0] - x0, P[:, 1] - y0)
         r[i] = True
         XY.append((x0, y0))
         M = np.vstack([M, r])
         brak &= ~r
+
+    # kandydaci o identycznym pokryciu są równoważni - zostaw po jednym (mniejszy problem)
+    _, jedn = np.unique(M, axis=0, return_index=True)
+    jedn.sort()
+    XY = [XY[j] for j in jedn]
+    M = M[jedn]
 
     # --- 2. wybór arkuszy
     wybrane = _wybierz_ilp(M) or _wybierz_zachlannie(M)
@@ -315,15 +326,15 @@ def _rozmiesc_skupisko(linie: list[LineString], W: float, H: float, zakazane,
             cy = (P[moje, 1].min() + P[moje, 1].max()) / 2
             cel = (cx - sx, cy - sy)
             x0, y0 = ark[a]
-            prop = []
             kc = max(5.0, W / 80)  # krok przesuwania (5 m dla 1:1000, ~50 m dla 1:10 000)
-            for dx in np.arange(-W / 2, W / 2 + 1e-9, kc):
-                for dy in np.arange(-H / 2, H / 2 + 1e-9, kc):
-                    nx, ny = x0 + dx, y0 + dy
-                    if shapely.contains_xy(uzyt, P[moje, 0] - nx, P[moje, 1] - ny).all():
-                        prop.append((math.hypot(nx - cel[0], ny - cel[1]), nx, ny))
-            prop.sort()
-            for _, nx, ny in prop[:60]:
+            DX, DY = np.meshgrid(np.arange(-W / 2, W / 2 + 1e-9, kc),
+                                 np.arange(-H / 2, H / 2 + 1e-9, kc))
+            NX, NY = x0 + DX.ravel(), y0 + DY.ravel()
+            ok = w_uzyt(P[moje, 0][None, :] - NX[:, None],
+                        P[moje, 1][None, :] - NY[:, None]).all(axis=1)
+            odl = np.hypot(NX - cel[0], NY - cel[1])
+            kolej_prop = np.nonzero(ok)[0][np.argsort(odl[ok])][:60]
+            for nx, ny in zip(NX[kolej_prop], NY[kolej_prop]):
                 r = pokrycie(nx, ny)
                 if r[moje].all():
                     ark[a], pk[a] = (nx, ny), r

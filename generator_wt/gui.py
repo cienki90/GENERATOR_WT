@@ -7,9 +7,9 @@ import sys
 import traceback
 from pathlib import Path
 
-from PySide6.QtCore import QDate, QObject, QSettings, Qt, QThread, Signal
+from PySide6.QtCore import QDate, QObject, QSettings, Qt, QThread, QTimer, Signal
 from PySide6.QtCore import QPointF, QRectF
-from PySide6.QtGui import QBrush, QColor, QFont, QPainter, QPen
+from PySide6.QtGui import QColor, QFont, QPainter, QPen
 from PySide6.QtWidgets import (
     QAbstractItemView, QApplication, QCheckBox, QComboBox, QDateEdit, QDialog,
     QDialogButtonBox, QDoubleSpinBox,
@@ -389,7 +389,10 @@ class OknoGlowne(QMainWindow):
         self.s_zakladka = QSpinBox(minimum=0, maximum=200, value=int(self.cfg.zakladka),
                                    suffix=" m")
         self.s_zakladka.setToolTip("Wspólny odcinek trasy na sąsiednich arkuszach")
-        self.s_zakladka.valueChanged.connect(self.przelicz_arkusze)
+        # przeliczenie arkuszy dopiero po chwili bez zmian (nie przy każdym kliknięciu strzałki)
+        self._zwloka_arkuszy = QTimer(self, singleShot=True, interval=700)
+        self._zwloka_arkuszy.timeout.connect(self.przelicz_arkusze)
+        self.s_zakladka.valueChanged.connect(self._zwloka_arkuszy.start)
         self.cb_orient = QCheckBox("Plan orientacyjny (*_orientacja.dxf + jpg)")
         rz_z = QHBoxLayout()
         rz_z.setContentsMargins(22, 0, 0, 0)
@@ -675,7 +678,7 @@ class OknoGlowne(QMainWindow):
         if self.projekt and self.projekt.slupy:
             self._konfiguracja()
             self.projekt.planuj()
-            self.projekt.planuj_arkusze()
+            self.projekt.odswiez_miejscowosci_arkuszy()  # ułożenie arkuszy się nie zmienia
             self._wypelnij_tabele()
             self._wypelnij_kontrole()
 

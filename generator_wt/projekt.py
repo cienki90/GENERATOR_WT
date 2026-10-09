@@ -173,6 +173,10 @@ class Projekt:
             self.arkusze.append(a)
         return self.arkusze
 
+    def odswiez_miejscowosci_arkuszy(self) -> None:
+        for a in self.arkusze:
+            a.miejscowosci = ark.miejscowosci_na_arkuszu(a, self.slupy)
+
     @staticmethod
     def tekst_inwestora(operator: dict | None) -> str | None:
         if not operator:
