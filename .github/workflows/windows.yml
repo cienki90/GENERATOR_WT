@@ -1,0 +1,74 @@
+name: Wersja Windows (.exe)
+
+# Buduje samodzielny program dla Windows (bez instalacji Pythona), testuje go
+# i publikuje jako paczkę ZIP w zakładce "Releases" (wydanie "najnowsza-wersja").
+
+on:
+  push:
+    branches: [etap-1-numeracja, main]
+    paths-ignore: ["**.md"]
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  buduj:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: pip
+
+      - name: Instalacja bibliotek
+        run: |
+          python -m pip install --upgrade pip
+          python -m pip install -r requirements.txt pyinstaller
+
+      - name: Budowa programu
+        run: >
+          pyinstaller --noconfirm --windowed --name "Generator WT"
+          --collect-all pyproj --collect-data docx --collect-data ezdxf
+          --collect-submodules scipy.optimize --exclude-module matplotlib
+          --exclude-module tkinter uruchom.pyw
+
+      - name: Pliki programu (szablony, listy, przykład)
+        shell: pwsh
+        run: |
+          $d = "dist/Generator WT"
+          Copy-Item szablony "$d/szablony" -Recurse
+          New-Item "$d/dane" -ItemType Directory | Out-Null
+          Copy-Item dane/slowniki.xlsx "$d/dane/"
+          New-Item "$d/przyklady" -ItemType Directory | Out-Null
+          Copy-Item "przyklady/baza robocza.dxf" "$d/przyklady/"
+          Copy-Item INSTRUKCJA.txt "$d/"
+
+      - name: Test spakowanego programu
+        shell: pwsh
+        run: |
+          $d = "dist/Generator WT"
+          $p = Start-Process "$d/Generator WT.exe" -ArgumentList "--autotest" -Wait -PassThru
+          Get-Content "$d/autotest.log"
+          Remove-Item "$d/autotest.log"
+          if ($p.ExitCode -ne 0) { throw "Autotest nie przeszedł" }
+
+      - name: Paczka ZIP
+        shell: pwsh
+        run: Compress-Archive -Path "dist/Generator WT" -DestinationPath GeneratorWT-Windows.zip
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: GeneratorWT-Windows
+          path: GeneratorWT-Windows.zip
+
+      - name: Publikacja w Releases
+        shell: pwsh
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          gh release delete najnowsza-wersja --yes --cleanup-tag 2>$null
+          $opis = "Wersja z gałęzi ${{ github.ref_name }}, commit ${{ github.sha }}.`n`nPobierz GeneratorWT-Windows.zip, rozpakuj i uruchom 'Generator WT.exe'. Szczegóły w INSTRUKCJA.txt."
+          gh release create najnowsza-wersja GeneratorWT-Windows.zip --title "Generator WT – najnowsza wersja (Windows)" --notes $opis --target ${{ github.sha }} --prerelease

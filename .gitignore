@@ -17,3 +17,4 @@ dist/
 *_orientacja_*.jgw
 *_tabela_projektowa.xlsx
 dane/cache_drog/
+autotest.log

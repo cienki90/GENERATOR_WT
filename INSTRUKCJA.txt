@@ -1,0 +1,26 @@
+GENERATOR WT - instrukcja dla użytkownika
+=========================================
+
+Program nie wymaga instalacji ani Pythona.
+
+1. Rozpakuj cały folder "Generator WT" w dowolne miejsce, np. na Pulpit albo do Dokumentów.
+   Nie rozpakowuj go do "Program Files", bo program zapisuje listy i pamięć podręczną
+   we własnym folderze "dane".
+2. Uruchom "Generator WT.exe".
+   Przy pierwszym uruchomieniu Windows może pokazać okno "System Windows ochronił ten komputer".
+   Program nie ma płatnego podpisu cyfrowego. Kliknij "Więcej informacji", a potem "Uruchom mimo to".
+3. Kliknij "Wybierz plik DXF…". Na próbę możesz otworzyć "przyklady\baza robocza.dxf".
+4. Sprawdź zakładki "Wykaz słupów", "Kontrola projektu" i "Arkusze",
+   potem kliknij "Numeruj i generuj dokumenty".
+
+Do pobierania adresów (GUGiK), sprawdzania ulic i podkładu mapy (OpenStreetMap) potrzebny jest internet.
+Bez internetu odznacz "Pobieraj adresy z GUGiK" i plan orientacyjny.
+
+Pliki w folderze programu:
+  szablony\   - wzory: pismo (docx), zestawienia (xlsx/xls), arkusze rysunkowe (dxf).
+                Możesz je podmienić na własne o tym samym układzie.
+  dane\slowniki.xlsx - listy operatorów i rejonów energetycznych (przycisk "Edytuj listy").
+  przyklady\  - przykładowy projekt.
+
+Wyniki zapisują się domyślnie w folderze wybranego pliku DXF.
+Plik *_orientacja.dxf przenoś zawsze razem z plikami *_orientacja*.jpg i .jgw.
