@@ -64,7 +64,8 @@ QLabel#ostrz { color: #b35c00; }
 KOLUMNY = [  # (nagłówek, atrybut, edytowalna)
     ("Nr", "etykieta", False), ("Stacja trafo", "stacja_trafo", False),
     ("Nr w sieci", "nr_w_sieci", True),
-    ("Miejscowość", "miejscowosc", True), ("Ulica", "ulica", True), ("Gmina", "gmina", True),
+    ("Miejscowość", "miejscowosc", True), ("Ulica", "ulica", True),
+    ("Droga przy słupie", "ulica_droga", False), ("Gmina", "gmina", True),
     ("Rejon", "rejon_skrot", False), ("Rodzaj", "rodzaj_slupa", True),
     ("Typ słupa", "typ_slupa", True), ("X (2000)", "geo_x", False),
     ("Y (2000)", "geo_y", False), ("Działka", "dzialka", False), ("Uwagi", "uwagi", True),
@@ -89,6 +90,11 @@ class Pracownik(QObject):
             if self.geokodowanie:
                 bledy = self.projekt.geokoduj(
                     lambda i, n: self.postep.emit(i, n, f"Pobieranie adresów z GUGiK: {i}/{n}"))
+                self.postep.emit(0, 0, "Sprawdzanie ulic (drogi OpenStreetMap)…")
+                try:
+                    self.projekt.sprawdz_ulice(log=lambda t: None)
+                except Exception as e:  # noqa: BLE001
+                    self.projekt.ostrzezenia.append(f"Sprawdzanie ulic pominięte: {e}")
             self.projekt.planuj()
             self.postep.emit(0, 0, "Rozmieszczanie arkuszy…")
             self.projekt.planuj_arkusze()
@@ -349,7 +355,23 @@ class OknoGlowne(QMainWindow):
         self.drzewo = QTreeWidget()
         self.drzewo.setHeaderLabels(["Kontrola", "Szczegóły"])
         self.drzewo.header().setSectionResizeMode(0, QHeaderView.ResizeToContents)
-        self.zakladki.addTab(self.drzewo, "Kontrola projektu")
+        kontrola = QWidget()
+        kl = QVBoxLayout(kontrola)
+        kl.setContentsMargins(0, 0, 0, 0)
+        rk2 = QHBoxLayout()
+        rk2.setContentsMargins(6, 6, 6, 0)
+        self.b_ulice = QPushButton(self.style().standardIcon(QStyle.SP_DialogApplyButton),
+                                   " Przyjmij ulice z dróg dla niezgodnych słupów")
+        self.b_ulice.setToolTip("Zastępuje ulicę z adresu nazwą najbliższej drogi (OSM). "
+                                "Pojedyncze słupy poprawisz w wykazie.")
+        self.b_ulice.clicked.connect(self.przyjmij_ulice)
+        self.b_ulice.setEnabled(False)
+        rk2.addWidget(self.b_ulice)
+        rk2.addStretch(1)
+        kl.addLayout(rk2)
+        kl.addWidget(self.drzewo)
+        self.zakladka_kontroli = kontrola
+        self.zakladki.addTab(kontrola, "Kontrola projektu")
 
         self.podglad = PodgladArkuszy()
         self.zakladki.addTab(self.podglad, "Arkusze")
@@ -513,8 +535,8 @@ class OknoGlowne(QMainWindow):
         self._wypelnij_kontrole()
         self.log(f"Analiza zakończona: {len(p.slupy)} słupów, {len(p.bledne_kliki)} "
                  f"błędnych klików, {len(p.ostrzezenia)} ostrzeżeń.")
-        if p.bledne_kliki or p.ostrzezenia or p.przesla():
-            self.zakladki.setCurrentWidget(self.drzewo)
+        if p.bledne_kliki or p.ostrzezenia or p.przesla() or p.niezgodne_ulice():
+            self.zakladki.setCurrentWidget(self.zakladka_kontroli)
         self._stan_przyciskow()
 
     def przelicz_numeracje(self):
@@ -545,6 +567,9 @@ class OknoGlowne(QMainWindow):
                     it.setBackground(szary)
                 if atr == "uwagi" and w.uwagi:
                     it.setForeground(QColor("#b35c00"))
+                if atr in ("ulica", "ulica_droga") and w.ulica_zgodna is False:
+                    it.setBackground(QColor("#ffe2c2"))
+                    it.setToolTip("Ulica z adresu różni się od drogi, przy której stoi słup")
                 self.tabela.setItem(r, k, it)
         self.tabela.blockSignals(False)
         self.tabela.resizeColumnsToContents()
@@ -558,6 +583,14 @@ class OknoGlowne(QMainWindow):
         if atr == "gmina":
             p.przypisz_rejony(self.rejony, self.c_rejon.currentData())
             self._wypelnij_tabele()
+        elif atr == "ulica":
+            from .ulice import norm
+            if w.ulica_droga:
+                # po ręcznej poprawie: zgodna, gdy równa drodze; inaczej uznajemy decyzję
+                # użytkownika (None = nie zgłaszaj)
+                w.ulica_zgodna = True if norm(w.ulica) == norm(w.ulica_droga) else None
+            self._wypelnij_tabele()
+            self._wypelnij_kontrole()
         elif atr == "nr_w_sieci":
             from .reader import ustaw_id_slupow
             ustaw_id_slupow(p.slupy)
@@ -613,6 +646,20 @@ class OknoGlowne(QMainWindow):
         if bledne:
             pr.setForeground(1, czerwony)
 
+        nz = p.niezgodne_ulice()
+        self.b_ulice.setEnabled(bool(nz))
+        if p.ulice_sprawdzone:
+            spr = sum(1 for w in p.plan if w.ulica_zgodna is not None)
+            ul = QTreeWidgetItem([f"Sprawdzenie ulic (drogi OSM do {self.cfg.odl_ulicy:g} m)",
+                                  f"niezgodnych {len(nz)} · sprawdzono {spr} z {len(p.plan)}"])
+        else:
+            ul = QTreeWidgetItem(["Sprawdzenie ulic", "nie wykonano (włącz pobieranie adresów)"])
+        ul.setIcon(0, ikona(QStyle.SP_MessageBoxWarning if nz else QStyle.SP_DialogApplyButton))
+        for w in nz:
+            it = QTreeWidgetItem(ul, [f"Słup {w.etykieta}", f"adres: {w.ulica or '–'}  →  "
+                                      f"droga przy słupie: {w.ulica_droga}"])
+            it.setForeground(1, QColor("#b35c00"))
+
         st = QTreeWidgetItem(["Stacje trafo", f"{len(p.stacje)}"])
         st.setIcon(0, ikona(QStyle.SP_DriveNetIcon))
         for s in p.stacje:
@@ -648,10 +695,27 @@ class OknoGlowne(QMainWindow):
             o.setIcon(0, ikona(QStyle.SP_MessageBoxWarning))
             for t in p.ostrzezenia:
                 QTreeWidgetItem(o, ["", t])
-        self.drzewo.addTopLevelItems([plan, bk, pr, ar, st, ns, op] + ([o] if p.ostrzezenia else []))
+        self.drzewo.addTopLevelItems([plan, bk, pr, ul, ar, st, ns, op] + ([o] if p.ostrzezenia else []))
         plan.setExpanded(True)
         bk.setExpanded(True)
         pr.setExpanded(True)
+        ul.setExpanded(True)
+
+    def przyjmij_ulice(self):
+        p = self.projekt
+        nz = p.niezgodne_ulice() if p else []
+        if not nz:
+            return
+        lista = "".join(f"<li>Słup {w.etykieta}: {w.ulica or '–'} → <b>{w.ulica_droga}</b></li>"
+                        for w in nz[:25]) + ("<li>…</li>" if len(nz) > 25 else "")
+        if QMessageBox.question(self, "Poprawa ulic", f"Zmienić ulicę dla {len(nz)} słupów?"
+                                f"<ul>{lista}</ul>", QMessageBox.Yes | QMessageBox.No,
+                                QMessageBox.No) != QMessageBox.Yes:
+            return
+        n = p.przyjmij_ulice_z_drog()
+        self.log(f"Poprawiono ulice: {n} słupów")
+        self._wypelnij_tabele()
+        self._wypelnij_kontrole()
 
     def _odswiez_podglad(self):
         from . import arkusze as ark

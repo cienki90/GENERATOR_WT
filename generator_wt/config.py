@@ -50,6 +50,7 @@ class Config:
 
     grupa_nieznana: str = "NIEUSTALONA MIEJSCOWOŚĆ"
     promien_adresu: int = 300
+    odl_ulicy: float = 30.0   # sprawdzanie ulic: drogi OSM w tej odległości od słupa [m]
     miejsca_po_przecinku: int = 2
     # Współrzędne w zestawieniach i piśmie: False = PL-2000 (X, Y), True = WGS 84 (szer., dł.)
     wgs84: bool = False

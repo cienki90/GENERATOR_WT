@@ -22,7 +22,7 @@ from shapely.geometry import LineString, box
 from shapely.ops import unary_union
 
 from . import arkusze as ark
-from . import dxf_writer, export, geocoder, numbering, pismo, podklad, reader, slowniki
+from . import dxf_writer, export, geocoder, numbering, pismo, podklad, reader, slowniki, ulice
 from .config import Config
 from .model import BlednyKlik, StacjaTrafo, Wierzcholek
 
@@ -41,6 +41,7 @@ class Projekt:
         self.epsg: int | None = None
         self.opisanych_slupow = 0
         self.numerow_w_sieci = 0
+        self.ulice_sprawdzone = False
         self.tolerancja_analizy = self.cfg.tolerancja_slupa
         self.arkusze: list[ark.Arkusz] = []
         self._szablon_doc = None
@@ -69,6 +70,30 @@ class Projekt:
         g = geocoder.Geokoder(self.epsg, self.cfg.promien_adresu,
                               plik_cache=self.cfg.plik_slownikow.parent / "cache_geokodowania.json")
         return geocoder.uzupelnij(self.slupy, g, postep=postep)
+
+    def sprawdz_ulice(self, log=print) -> list[ulice.WynikUlicy]:
+        """Porównuje ulicę z adresu z nazwaną drogą (OSM) przy słupie."""
+        if self.epsg is None:
+            return []
+        wyniki = ulice.sprawdz(self.slupy, self.epsg, self.cfg.odl_ulicy,
+                               self.cfg.plik_slownikow.parent / "cache_drog", log)
+        for r in wyniki:
+            r.slup.ulica_droga = r.ulica_droga
+            r.slup.ulica_zgodna = r.zgodna
+        self.ulice_sprawdzone = True
+        return wyniki
+
+    def niezgodne_ulice(self) -> list[Wierzcholek]:
+        return [w for w in self.plan if w.ulica_zgodna is False]
+
+    def przyjmij_ulice_z_drog(self, slupy: list[Wierzcholek] | None = None) -> int:
+        n = 0
+        for w in (slupy if slupy is not None else self.niezgodne_ulice()):
+            if w.ulica_droga:
+                w.ulica = w.ulica_droga
+                w.ulica_zgodna = True
+                n += 1
+        return n
 
     def przelicz_wgs84(self) -> None:
         """Współrzędne słupów w WGS 84 (EPSG:4326)."""

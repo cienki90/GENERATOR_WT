@@ -19,7 +19,8 @@ Opcjonalnie `buduj_exe.bat` tworzy samodzielny `dist\Generator WT\Generator WT.e
    - wyznacza strefy trafo z polilinii na warstwie `!trafo` i na warstwach o nazwie zaczynającej się od `_trafo`. Niezamknięte polilinie są domykane. Nazwa strefy to numer stacji z opisu (multileader „STACJA TRAFO 05-0792”). Obrysy bez opisu stacji dołączane są do strefy, z którą się stykają,
    - odczytuje rodzaj i typ słupa z opisów „słup nN / P-10/ZN”,
    - odczytuje numery słupów w sieci (np. 9, 9.1) z tekstów na warstwach zaczynających się od `_numery`; identyfikator słupa ma postać `stacja/numer`, np. `05-0743/9.1`,
-   - pobiera z GUGiK miejscowość, ulicę, gminę i działkę.
+   - pobiera z GUGiK miejscowość, ulicę, gminę i działkę,
+   - sprawdza ulice: porównuje ulicę z najbliższego adresu z nazwanymi drogami z OpenStreetMap w promieniu 30 m od słupu. Niezgodności pokazuje w „Kontroli projektu” i podświetla w wykazie. Przycisk „Przyjmij ulice z dróg” zamienia je na nazwę drogi.
 2. **Zlecenie:** wybierz operatora i rejon domyślny. Rejon dobierany jest według gminy z listy w `dane/slowniki.xlsx`, a dla gmin spoza listy używany jest rejon domyślny. Listy edytujesz przyciskiem „Edytuj listy”.
 3. Sprawdź zakładki „Wykaz słupów” i „Kontrola projektu”. W wykazie możesz poprawić miejscowość, ulicę, gminę, rodzaj i typ słupa oraz uwagi.
 4. Kliknij **Numeruj i generuj dokumenty**. Program pokaże plan i zapyta o potwierdzenie, a potem o układ współrzędnych w piśmie i zestawieniach: PL-2000 albo WGS 84.

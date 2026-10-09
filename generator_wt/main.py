@@ -49,6 +49,8 @@ def main(argv=None) -> int:
                     help="utwórz plan orientacyjny w podanej skali")
     ap.add_argument("--szarosc", action="store_true", help="podkład w odcieniach szarości")
     ap.add_argument("--podklad", choices=["osm", "gugik"], default="osm")
+    ap.add_argument("--popraw-ulice", action="store_true",
+                    help="niezgodne ulice zastąp nazwą najbliższej drogi (OSM)")
     ap.add_argument("--bez-geokodowania", action="store_true")
     ap.add_argument("--tak", action="store_true", help="nie pytaj o potwierdzenie")
     a = ap.parse_args(argv)
@@ -69,7 +71,18 @@ def main(argv=None) -> int:
         print(file=sys.stderr)
         if bl:
             print(f"  {bl} słupów bez adresu (błąd usługi)")
+        try:
+            p.sprawdz_ulice()
+        except RuntimeError as e:
+            print("  Sprawdzanie ulic pominięte:", e)
     p.planuj()
+    if p.ulice_sprawdzone:
+        nz = p.niezgodne_ulice()
+        print(f"\nSprawdzenie ulic (drogi OSM do {cfg.odl_ulicy:g} m): niezgodnych {len(nz)}")
+        for w in nz:
+            print(f"  słup {w.etykieta}: adres '{w.ulica or '-'}', droga '{w.ulica_droga}'")
+        if nz and a.popraw_ulice:
+            print(f"  poprawiono: {p.przyjmij_ulice_z_drog()}")
 
     if not cfg.plik_slownikow.exists():
         slowniki.utworz_szablon(cfg.plik_slownikow)

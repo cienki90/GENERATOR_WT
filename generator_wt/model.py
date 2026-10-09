@@ -52,6 +52,8 @@ class Wierzcholek:
     wojewodztwo: Optional[str] = None
     obreb: Optional[str] = None
     dzialka: Optional[str] = None
+    ulica_droga: Optional[str] = None    # najbliższa nazwana droga (OSM)
+    ulica_zgodna: Optional[bool] = None  # None = nie sprawdzono / brak drogi w pobliżu
     rejon: Optional[str] = None
     lat: Optional[float] = None   # WGS 84
     lon: Optional[float] = None
