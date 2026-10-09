@@ -361,6 +361,110 @@ def tekst_obiektu(szablon: str, miejscowosci: list[str]) -> str:
     return f"{plain} {lacznik} {lista}"
 
 
+# ---------------------------------------------------------------- mieszczenie tekstu
+
+# szerokości znaków Arial (= metryka Helvetica) w 1/1000 em, znaki 32-126
+_ZNAKI = (' !"#$%&\'()*+,-./0123456789:;<=>?@ABCDEFGHIJKLMNOPQRSTUVWXYZ[\\]^_`'
+          'abcdefghijklmnopqrstuvwxyz{|}~')
+_SZER = [278, 278, 355, 556, 556, 889, 667, 222, 333, 333, 389, 584, 278, 333, 278, 278, 556,
+         556, 556, 556, 556, 556, 556, 556, 556, 556, 278, 278, 584, 584, 584, 556, 1015, 667,
+         667, 722, 722, 667, 611, 778, 722, 278, 500, 667, 556, 833, 722, 778, 667, 778, 722,
+         667, 611, 722, 667, 944, 667, 667, 611, 278, 278, 278, 469, 556, 222, 556, 556, 500,
+         556, 556, 278, 556, 556, 222, 222, 500, 222, 833, 556, 556, 556, 556, 333, 500, 278,
+         556, 500, 722, 500, 500, 500, 334, 260, 334, 584]
+SZEROKOSC_ZNAKU = dict(zip(_ZNAKI, _SZER))
+_PL = str.maketrans("ąćęłńóśźżĄĆĘŁŃÓŚŹŻ", "acelnoszzACELNOSZZ")
+WYS_WERSALIKOW = 0.716   # wysokość tekstu w CAD = wysokość wielkich liter (Arial: 0,716 em)
+ROZSTAW_CAD = 5 / 3      # odstęp linii MTEXT = 5/3 wysokości x współczynnik
+
+
+def szerokosc_tekstu(tekst: str, wysokosc: float, wsp_szer: float = 1.0) -> float:
+    em = wysokosc / WYS_WERSALIKOW
+    return sum(SZEROKOSC_ZNAKU.get(c, 556) for c in tekst.translate(_PL)) / 1000 * em * wsp_szer
+
+
+def zawin(tekst: str, wysokosc: float, szer: float) -> list[str]:
+    linie, akt = [], ""
+    for slowo in tekst.split():
+        prob = f"{akt} {slowo}".strip()
+        if akt and szerokosc_tekstu(prob, wysokosc) > szer:
+            linie.append(akt)
+            akt = slowo
+        else:
+            akt = prob
+    if akt:
+        linie.append(akt)
+    return linie
+
+
+def wysokosc_bloku(n_linii: int, wysokosc: float, rozstaw: float) -> float:
+    """Wysokość akapitu: wielkie litery pierwszej linii + kolejne linie + dolne wydłużenia."""
+    return wysokosc + (n_linii - 1) * ROZSTAW_CAD * rozstaw * wysokosc + 0.3 * wysokosc
+
+
+def _komorka_pod(e, encje) -> tuple[float, float]:
+    """(dostępna szerokość, dostępna wysokość) dla MTEXT od jego punktu wstawienia
+    do najbliższej linii poziomej poniżej i pionowej z prawej."""
+    x, y = e.dxf.insert.x, e.dxf.insert.y
+    poziome, pionowe = [], []
+    for g in encje:
+        odc = []
+        if g.dxftype() == "LINE":
+            odc = [(g.dxf.start, g.dxf.end)]
+        elif g.dxftype() == "LWPOLYLINE":
+            p = [ezdxf.math.Vec3(q[0], q[1], 0) for q in g.get_points("xy")]
+            odc = list(zip(p, p[1:] + (p[:1] if g.closed else [])))
+        for a, b in odc:
+            if abs(a.y - b.y) < 0.01 and a.y < y - 0.1 and min(a.x, b.x) <= x + 1 <= max(a.x, b.x):
+                poziome.append(a.y)
+            if abs(a.x - b.x) < 0.01 and a.x > x + 1 and min(a.y, b.y) <= y - 1 <= max(a.y, b.y):
+                pionowe.append(a.x)
+    dol = max(poziome, default=y - 10)
+    prawa = min(pionowe, default=x + (e.dxf.get("width", 0) or 80))
+    szer = prawa - x - 0.8
+    if e.dxf.get("width", 0):
+        szer = min(szer, e.dxf.width)
+    return szer, y - dol - 0.6
+
+
+def dopasuj_tekst(e, encje, tekst: str, h_maks: float | None = None, h_min: float = 1.3,
+                  log=None) -> str:
+    """Wpisuje 'tekst' do MTEXT tak, by zmieścił się w komórce tabelki: najpierw zmniejsza
+    odstęp linii, potem wysokość tekstu (do h_min). Jeśli dalej się nie mieści,
+    skraca listę po ostatnim przecinku ("..., A, B i in."). Zwraca wpisany tekst."""
+    szer, wys = _komorka_pod(e, encje)
+    szer *= 0.97  # zapas na różnice w renderowaniu czcionki między programami CAD
+    h0 = h_maks or e.dxf.char_height
+    m = re.search(r"\\px[^;]*sm([\d.]+)", e.text)
+    rozstaw0 = float(m.group(1)) if m else (e.dxf.get("line_spacing_factor", 1.0) or 1.0)
+    kandydat = tekst
+    while True:
+        h = h0
+        while h >= h_min - 1e-9:
+            for rozstaw in sorted({rozstaw0, min(rozstaw0, 1.0), min(rozstaw0, 0.9)},
+                                  reverse=True):
+                linie = zawin(kandydat, h, szer)
+                if all(szerokosc_tekstu(l, h) <= szer for l in linie) and \
+                        wysokosc_bloku(len(linie), h, rozstaw) <= wys:
+                    e.dxf.char_height = round(h, 2)
+                    tresc = re.sub(r"\\px[^;]*;", "", e.text)
+                    e.text = tresc
+                    _ustaw_mtext(e, kandydat)
+                    e.text = f"\\pxsm{rozstaw:g},ql;" + e.text
+                    e.dxf.width = szer
+                    if log and (h < h0 - 1e-9 or kandydat != tekst):
+                        log(f"Tabelka: tekst '{kandydat[:40]}…' wpisano wys. {h:.2f}"
+                            + (" (skrócony)" if kandydat != tekst else ""))
+                    return kandydat
+            h -= 0.05
+        if "," not in kandydat:
+            _ustaw_mtext(e, kandydat)  # nie da się lepiej - zostaw najmniejszy
+            e.dxf.char_height = h_min
+            return kandydat
+        glowa = kandydat.rsplit(",", 1)[0].removesuffix(" i in.")
+        kandydat = glowa + " i in."
+
+
 def _etykieta(tekst: str) -> str:
     return _bez_formatow(tekst).rstrip(":").strip().lower()
 
@@ -380,7 +484,7 @@ def pole_tabelki(mtexty: list, etykieta: str):
                default=None)
 
 
-def wypelnij_tabelke(encje, wartosci: dict[str, str | None]) -> None:
+def wypelnij_tabelke(encje, wartosci: dict[str, str | None], log=None) -> None:
     """wartosci: etykieta -> nowy tekst (None = bez zmian). Dla 'Obiekt' podaj listę
     miejscowości jako tekst rozdzielony przecinkami, poprzedzony znakiem '§'."""
     mt = [e for e in encje if e.dxftype() == "MTEXT"]
@@ -392,7 +496,7 @@ def wypelnij_tabelke(encje, wartosci: dict[str, str | None]) -> None:
             continue
         if etykieta.lower() == "obiekt" and wartosc.startswith("§"):
             lista = [x for x in wartosc[1:].split("|") if x]
-            _ustaw_mtext(e, tekst_obiektu(e.text, lista))
+            dopasuj_tekst(e, encje, tekst_obiektu(e.text, lista), log=log)
         else:
             _ustaw_mtext(e, wartosc)
 
@@ -490,7 +594,7 @@ def dodaj_uklady(doc: Drawing, szablon_doc: Drawing, szablon: SzablonUkladu,
                  inwestor: str | None, opracowal: str | None, data: str | None,
                  dodatkowe_teksty: list[str] | None = None,
                  zamrozone: list[str] | None = None,
-                 wysokosc_branzy: float | None = None) -> None:
+                 wysokosc_branzy: float | None = None, log=None) -> None:
     """Tworzy układy papieru (po jednym na arkusz) na wzór układu szablonu."""
     imp = Importer(szablon_doc, doc)
     nowe = []
@@ -514,7 +618,7 @@ def dodaj_uklady(doc: Drawing, szablon_doc: Drawing, szablon: SzablonUkladu,
             "INWESTOR": inwestor,
             "Opracował": opracowal,
             "Data": data,
-        })
+        }, log=log)
         ujednolic_teksty(doc, encje)
         if wysokosc_branzy:
             ustaw_branze(encje, wysokosc_branzy)
