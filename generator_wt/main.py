@@ -45,6 +45,8 @@ def main(argv=None) -> int:
     ap.add_argument("--opracowal")
     ap.add_argument("--data-rysunku")
     ap.add_argument("--bez-arkuszy", action="store_true")
+    ap.add_argument("--pdf", action="store_true",
+                    help="dodatkowo zapisz arkusze numeracji (i plan orientacyjny) jako PDF")
     ap.add_argument("--orientacja", type=int, choices=[10000, 25000],
                     help="utwórz plan orientacyjny w podanej skali")
     ap.add_argument("--szarosc", action="store_true", help="podkład w odcieniach szarości")
@@ -124,9 +126,13 @@ def main(argv=None) -> int:
         zad.append(("uproszczona.xls", p.zapisz_uproszczona))
     if z & {"projektowa", "wszystkie"}:
         zad.append(("tabela_projektowa.xlsx", p.zapisz_projektowa))
+    if a.pdf and not a.bez_arkuszy:
+        zad.append(("numeracja.pdf", lambda f: p.zapisz_numeracje_pdf(f)))
     if a.orientacja:
         zad.append(("orientacja.dxf", lambda f: p.zapisz_orientacje(
             f, a.orientacja, a.szarosc, operator, a.opracowal, a.data_rysunku, a.podklad)))
+        if a.pdf:
+            zad.append(("orientacja.pdf", lambda f: p.zapisz_orientacje_pdf(f)))
     for przyr, f in zad:
         cel = p.sciezka(kat, przyr)
         f(cel)

@@ -33,6 +33,8 @@ def uruchom() -> int:
         with tempfile.TemporaryDirectory() as tmp:
             k = Path(tmp)
             p.zapisz_dxf(k / "t_numeracja.dxf", True, op, "Test", "01.2026")
+            stron = p.zapisz_numeracje_pdf(k / "t_numeracja.pdf", log=lambda t: None)
+            linie.append(f"PDF numeracji: {stron} stron")
             p.cfg.wgs84 = True
             p.zapisz_pismo(k / "t_pismo.docx", op, None)
             p.zapisz_rozbudowana(k / "t_rozbudowana.xlsx")

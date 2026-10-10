@@ -385,7 +385,10 @@ class OknoGlowne(QMainWindow):
         f4 = QVBoxLayout(g4)
         self.cb_dxf = QCheckBox("Numeracja w DXF (*_numeracja.dxf)")
         self.cb_arkusze = QCheckBox("    + arkusze 1:1000 (układy 1, 2, 3…)")
+        self.cb_pdf_num = QCheckBox("    + arkusze jako PDF (*_numeracja.pdf)")
+        self.cb_pdf_num.setToolTip("Wielostronicowy PDF: po jednym arkuszu 1:1000 na stronę A3")
         self.cb_dxf.toggled.connect(self.cb_arkusze.setEnabled)
+        self.cb_arkusze.toggled.connect(self.cb_pdf_num.setEnabled)
         self.s_zakladka = QSpinBox(minimum=0, maximum=200, value=int(self.cfg.zakladka),
                                    suffix=" m")
         self.s_zakladka.setToolTip("Wspólny odcinek trasy na sąsiednich arkuszach")
@@ -403,8 +406,8 @@ class OknoGlowne(QMainWindow):
         self.cb_rozb = QCheckBox("Zestawienie rozbudowane (*_rozbudowana.xlsx)")
         self.cb_upr = QCheckBox("Zestawienie uproszczone (*_uproszczona.xls)")
         self.cb_proj = QCheckBox("Tabela projektowa (*_tabela_projektowa.xlsx)")
-        for c in (self.cb_dxf, self.cb_arkusze, self.cb_pismo, self.cb_rozb, self.cb_upr,
-                  self.cb_proj, self.cb_orient):
+        for c in (self.cb_dxf, self.cb_arkusze, self.cb_pdf_num, self.cb_pismo, self.cb_rozb,
+                  self.cb_upr, self.cb_proj, self.cb_orient):
             c.setChecked(True)
             f4.addWidget(c)
             if c is self.cb_arkusze:
@@ -420,10 +423,14 @@ class OknoGlowne(QMainWindow):
         self.cb_szarosc = QCheckBox("Podkład w odcieniach szarości")
         self.cb_trasa_or = QCheckBox("Pokaż trasę na planie")
         self.cb_trasa_or.setChecked(True)
+        self.cb_pdf_orient = QCheckBox("Zapisz też jako PDF (*_orientacja.pdf)")
+        self.cb_pdf_orient.setToolTip("Plan orientacyjny jako PDF z podkładem mapowym")
+        self.cb_pdf_orient.setChecked(True)
         fo.addRow("Skala:", self.c_skala)
         fo.addRow("Podkład:", self.c_zrodlo)
         fo.addRow(self.cb_szarosc)
         fo.addRow(self.cb_trasa_or)
+        fo.addRow(self.cb_pdf_orient)
         self.w_orient = QWidget()
         self.w_orient.setLayout(fo)
         self.cb_orient.toggled.connect(self.w_orient.setEnabled)
@@ -924,6 +931,8 @@ class OknoGlowne(QMainWindow):
         if self.cb_dxf.isChecked():
             zadania.append(("numeracja.dxf", lambda f: p.zapisz_dxf(
                 f, self.cb_arkusze.isChecked(), operator, opracowal, data_rys)))
+            if self.cb_arkusze.isChecked() and self.cb_pdf_num.isChecked():
+                zadania.append(("numeracja.pdf", lambda f: p.zapisz_numeracje_pdf(f, self.log)))
         if self.cb_pismo.isChecked():
             zadania.append(("pismo.docx", lambda f: p.zapisz_pismo(
                 f, operator, self.d_od.date().toString("dd.MM.yyyy"),
@@ -950,6 +959,10 @@ class OknoGlowne(QMainWindow):
                                             data_rys, self.c_zrodlo.currentData(),
                                             self.cb_trasa_or.isChecked(), post, self.log)
                     self.log(f"Plan orientacyjny: arkusze {', '.join(a.nazwa for a in o)}")
+                    if self.cb_pdf_orient.isChecked():
+                        pdf = p.sciezka(self._katalog(), "orientacja.pdf")
+                        p.zapisz_orientacje_pdf(pdf, self.log)
+                        self.log(f"Zapisano: {pdf}")
                 finally:
                     self.pasek.setVisible(False)
             zadania.append(("orientacja.dxf", orient))

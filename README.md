@@ -43,6 +43,7 @@ W zakładce „Kontrola projektu” są wymienione przęsła dłuższe niż 55 m
 - Każdy arkusz ma rzutnię papieru i ustawienia strony A3. Wszystkie teksty mają styl Arial (`WT_Arial`).
 - W tabelce program uzupełnia: inwestora (wybrany operator), opracował, datę, numer rysunku, skalę, miejscowości widoczne na arkuszu.
 - Obrysy arkuszy z numerami są w modelu na niedrukowalnej warstwie `WT_arkusze`.
+- Opcjonalnie arkusze zapisywane są też jako wielostronicowy PDF (`*_numeracja.pdf`): jeden arkusz 1:1000 na stronie A3, rysunek wektorowy razem z tabelką i legendą.
 
 ### Plan orientacyjny (`*_orientacja.dxf` + `*_orientacja.jpg`)
 
@@ -51,6 +52,7 @@ W zakładce „Kontrola projektu” są wymienione przęsła dłuższe niż 55 m
 - Kafle są pobierane tylko dla widoku arkuszy orientacji z zapasem 10 mm papieru (`zapas_podkladu_mm` w `config.py`).
 - Arkusze orientacji, których widoki się stykają lub nakładają, mają jeden wspólny obraz. Arkusze rozłączne mają osobne obrazy: `*_orientacja_1.jpg`, `*_orientacja_2.jpg`…
 - Obrazy JPG są podpięte do DXF ścieżką względną. Przenoś je razem z plikiem DXF. Pliki `.jgw` to georeferencja.
+- Opcjonalnie plan zapisywany jest też jako PDF (`*_orientacja.pdf`): jeden arkusz orientacji (0.A, 0.B…) na stronie A3, z podkładem mapowym wklejonym pod rysunek wektorowy.
 
 ## Pliki
 
@@ -61,7 +63,7 @@ W zakładce „Kontrola projektu” są wymienione przęsła dłuższe niż 55 m
 - `przyklady/` zawiera przykładowy projekt i wzór numeracji.
 - `generator_wt/config.py` przechowuje ustawienia: warstwy, wygląd numeracji, tolerancje.
 
-Wiersz poleceń (do automatyzacji): `python -m generator_wt.main projekt.dxf --tak`.
+Wiersz poleceń (do automatyzacji): `python -m generator_wt.main projekt.dxf --tak`. Flaga `--pdf` dodaje PDF arkuszy numeracji (i planu orientacyjnego, gdy użyto `--orientacja`).
 
 ## Plan
 

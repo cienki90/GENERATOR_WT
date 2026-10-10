@@ -29,7 +29,7 @@ jobs:
       - name: Budowa programu
         run: >
           pyinstaller --noconfirm --windowed --name "Generator WT"
-          --collect-all pyproj --collect-data docx --collect-data ezdxf
+          --collect-all pyproj --collect-all pymupdf --collect-data docx --collect-data ezdxf
           --collect-submodules scipy.optimize --exclude-module matplotlib
           --exclude-module tkinter uruchom.pyw
 
