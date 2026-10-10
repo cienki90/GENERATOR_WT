@@ -1,23 +1,49 @@
 """Eksport rysunków DXF do PDF (wektorowo), przez dodatek rysujący ezdxf + PyMuPDF.
 
 Każdy układ papieru DXF (A3) staje się osobną stroną wielostronicowego PDF-u,
-odwzorowaną 1:1 (bez skalowania do strony). Treść modelu pod rzutnią (słupy,
-numeracja, obrysy arkuszy, tabelki, legenda) rysowana jest wektorowo.
+odwzorowaną 1:1 (bez skalowania do strony).
 
-Podkład rastrowy planu orientacyjnego (obraz IMAGE w modelu) nie jest wiernie
-renderowany przez dodatek rysujący, dlatego dla orientacji wklejamy pliki JPG
-podkładu wprost na strony PDF-u, pod rysunek wektorowy. Pozycja obrazu na papierze
-wynika z ustawień rzutni (środek i wysokość widoku) oraz georeferencji obrazu.
+Trzy sprawy wymagają osobnego potraktowania, bo inaczej PDF różni się od wydruku z CAD-a:
+
+1. Kolejność rysowania (białe tło tabelki). Dodatek rysujący rysuje zawartość rzutni
+   (model: trasa, strefy trafo) PO encjach przestrzeni papieru, więc rysunek z modelu
+   przebijałby przez tabelkę i legendę. Rysujemy więc stronę w dwóch warstwach: model
+   na spodzie, a encje przestrzeni papieru (ramka, tabelka z białym tłem, legenda)
+   nakładamy na wierzchu - jak w CAD-zie, gdzie tabelka przykrywa okno rzutni.
+   Warstwa wierzchnia ma usunięte czarne tło strony, żeby była przezroczysta.
+
+2. Grubość numeracji. Numery słupów są pisane czcionką kreskową SHX (romans.shx),
+   którą dodatek rysujący renderuje cienko i nieczytelnie. Na czas eksportu PDF
+   przestawiamy styl tekstu numeracji na pogrubioną czcionkę TrueType (bez zmiany
+   zapisanego pliku DXF).
+
+3. Podkład rastrowy planu orientacyjnego. Dodatek rysujący osadza obraz
+   nieskompresowany (plik PDF rośnie do kilkudziesięciu MB). Dlatego obrazy IMAGE
+   są pomijane w renderze, a pliki JPG podkładu wklejamy wprost na strony pod rysunek
+   wektorowy; pozycja wynika z ustawień rzutni i georeferencji obrazu.
 """
 from __future__ import annotations
 
+import re
 from pathlib import Path
 
-import ezdxf
 from ezdxf.addons.drawing import Frontend, RenderContext, layout
 from ezdxf.addons.drawing import pymupdf as ezpdf
-from ezdxf.addons.drawing.config import BackgroundPolicy, Configuration
+from ezdxf.addons.drawing.config import (BackgroundPolicy, Configuration, ImagePolicy,
+                                         LineweightPolicy)
 from ezdxf.document import Drawing
+
+# Styl tekstu i czcionka numeracji na potrzeby PDF (pogrubiona, czytelna).
+# Arial Bold jest w każdym Windowsie; gdy go brak, ezdxf użyje czcionki zastępczej.
+STYL_NUMEROW_PDF = "WT_PDF_NUMERY"
+CZCIONKA_NUMEROW_PDF = "arialbd.ttf"
+
+# Pogrubienie linii na wydruku (numeracja i trasa mają w DXF jawny lineweight;
+# tabelka i opisy słupów - domyślny, więc nie grubieją). W 1/100 mm skalowane.
+SKALA_GRUBOSCI = 1.6
+
+# Wzorzec bloku białego/czarnego tła strony na początku strumienia PDF warstwy papieru.
+_TLO_STRONY = re.compile(rb"q\s+0 0 [\d.]+ [\d.]+ re\s+h\s+0 0 0 rg f\s+Q")
 
 
 def _nazwy_ukladow(doc: Drawing, nazwy=None) -> list[str]:
@@ -33,13 +59,97 @@ def _strona_ukladu(psp):
     return page, ustaw
 
 
-def eksportuj_uklady(doc: Drawing, wyjscie: Path, nazwy=None, tlo_biale: bool = True,
-                     obrazy_tla=None, log=None) -> int:
+def _konfig(tlo: BackgroundPolicy) -> Configuration:
+    return Configuration(
+        background_policy=tlo,
+        image_policy=ImagePolicy.IGNORE,          # obrazy wklejamy ręcznie (patrz niżej)
+        lineweight_policy=LineweightPolicy.ABSOLUTE,
+        lineweight_scaling=SKALA_GRUBOSCI,
+    )
+
+
+class _PogrubioneNumery:
+    """Na czas eksportu PDF przestawia styl tekstu numeracji na pogrubioną czcionkę
+    TrueType i przywraca stan po zakończeniu (nie zmienia zapisanego pliku DXF)."""
+
+    def __init__(self, doc: Drawing, warstwa_numeracji: str):
+        self.doc = doc
+        self.warstwa = warstwa_numeracji
+        self.pierwotne: list = []
+
+    def __enter__(self):
+        if STYL_NUMEROW_PDF not in self.doc.styles:
+            self.doc.styles.add(STYL_NUMEROW_PDF, font=CZCIONKA_NUMEROW_PDF)
+        for e in self.doc.modelspace().query(f'MTEXT TEXT[layer=="{self.warstwa}"]i'):
+            self.pierwotne.append((e, e.dxf.style))
+            e.dxf.style = STYL_NUMEROW_PDF
+        return self
+
+    def __exit__(self, *a):
+        for e, styl in self.pierwotne:
+            e.dxf.style = styl
+
+
+def _rysuj_strone(doc: Drawing, psp, ctx, obrazy_tla, pymupdf):
+    """Buduje jedną stronę PDF danego układu papieru.
+
+    Warstwy od spodu: (1) podkład rastrowy (JPG, tylko orientacja), (2) zawartość
+    rzutni (model: trasa, obrysy arkuszy, numeracja), (3) encje przestrzeni papieru
+    (ramka, tabelka z białym tłem, legenda). Warstwy 2 i 3 mają przezroczyste tło,
+    żeby podkład był widoczny, a tabelka zasłaniała rysunek z modelu."""
+    page, ustaw = _strona_ukladu(psp)
+    na_pt = 72.0 / 25.4
+
+    if obrazy_tla:
+        # pusta biała strona, na niej podkład (spód), potem model i papier
+        strona = pymupdf.open()
+        strona.new_page(width=page.width * na_pt, height=page.height * na_pt)
+        for t in obrazy_tla:
+            if t.plik.exists():
+                prost = pymupdf.Rect(t.x * na_pt, t.y * na_pt,
+                                     (t.x + t.szer) * na_pt, (t.y + t.wys) * na_pt)
+                strona[0].insert_image(prost, filename=str(t.plik), keep_proportion=False)
+        be_model = ezpdf.PyMuPdfBackend()
+        Frontend(ctx, be_model, config=_konfig(BackgroundPolicy.OFF)).draw_layout(psp)
+        model = pymupdf.open("pdf", be_model.get_pdf_bytes(page, settings=ustaw))
+        _usun_tlo_strony(model)
+        strona[0].show_pdf_page(strona[0].rect, model, 0)
+        model.close()
+    else:
+        # bez podkładu: model od razu jako strona (białe tło)
+        be_model = ezpdf.PyMuPdfBackend()
+        Frontend(ctx, be_model, config=_konfig(BackgroundPolicy.WHITE)).draw_layout(psp)
+        strona = pymupdf.open("pdf", be_model.get_pdf_bytes(page, settings=ustaw))
+
+    # --- warstwa przestrzeni papieru (bez rzutni) na wierzchu, przezroczyste tło
+    pap = [e for e in psp if e.dxftype() != "VIEWPORT"]
+    if pap:
+        be_pap = ezpdf.PyMuPdfBackend()
+        Frontend(ctx, be_pap, config=_konfig(BackgroundPolicy.OFF)).draw_entities(pap)
+        wierzch = pymupdf.open("pdf", be_pap.get_pdf_bytes(page, settings=ustaw))
+        _usun_tlo_strony(wierzch)
+        strona[0].show_pdf_page(strona[0].rect, wierzch, 0)
+        wierzch.close()
+    return strona
+
+
+def _usun_tlo_strony(pdf) -> None:
+    """Usuwa z warstwy wierzchniej czarny prostokąt tła strony, żeby była przezroczysta."""
+    strona = pdf[0]
+    xref = strona.get_contents()[0]
+    raw = pdf.xref_stream(xref)
+    nowy = _TLO_STRONY.sub(b"", raw, count=1)
+    if nowy != raw:
+        pdf.update_stream(xref, nowy)
+
+
+def eksportuj_uklady(doc: Drawing, wyjscie: Path, nazwy=None, obrazy_tla=None,
+                     warstwa_numeracji: str | None = None, log=None) -> int:
     """Zapisuje układy papieru 'doc' do jednego wielostronicowego PDF-u.
 
-    nazwy       - lista nazw układów (kolejność stron); None = wszystkie poza 'Model'.
-    obrazy_tla  - opcjonalny słownik {nazwa_układu: [RysunekTla, ...]} z obrazami do
-                  wklejenia pod rysunek wektorowy (podkład planu orientacyjnego).
+    nazwy             - lista nazw układów (kolejność stron); None = wszystkie poza 'Model'.
+    obrazy_tla        - opcjonalny słownik {nazwa_układu: [RysunekTla, ...]} (podkład).
+    warstwa_numeracji - gdy podana, numery na tej warstwie są pogrubiane w PDF.
     Zwraca liczbę zapisanych stron.
     """
     import pymupdf
@@ -48,29 +158,33 @@ def eksportuj_uklady(doc: Drawing, wyjscie: Path, nazwy=None, tlo_biale: bool = 
     if not nazwy:
         raise ValueError("Dokument nie ma układów papieru do zapisania w PDF.")
     ctx = RenderContext(doc)
-    cfg = Configuration(
-        background_policy=BackgroundPolicy.WHITE if not obrazy_tla else BackgroundPolicy.OFF)
     pdf = pymupdf.open()
+    pogrub = (_PogrubioneNumery(doc, warstwa_numeracji) if warstwa_numeracji
+              else _bez_zmian())
     try:
-        for nazwa in nazwy:
-            psp = doc.paperspace(nazwa)
-            page, ustaw = _strona_ukladu(psp)
-            tla = (obrazy_tla or {}).get(nazwa) or []
-            backend = ezpdf.PyMuPdfBackend()
-            Frontend(ctx, backend, config=cfg).draw_layout(psp)
-            strona_bajty = backend.get_pdf_bytes(page, settings=ustaw)
-            zrodlo = pymupdf.open("pdf", strona_bajty)
-            if tla:
-                _wklej_tla(zrodlo[0], tla, page)
-            pdf.insert_pdf(zrodlo)
-            zrodlo.close()
-            if log:
-                log(f"PDF: strona {nazwa}")
+        with pogrub:
+            for nazwa in nazwy:
+                psp = doc.paperspace(nazwa)
+                tla = (obrazy_tla or {}).get(nazwa) or []
+                strona = _rysuj_strone(doc, psp, ctx, tla, pymupdf)
+                pdf.insert_pdf(strona)
+                strona.close()
+                if log:
+                    log(f"PDF: strona {nazwa}")
         Path(wyjscie).parent.mkdir(parents=True, exist_ok=True)
-        pdf.save(str(wyjscie))
+        # garbage+deflate+clean: usuwa duplikaty i kompresuje strumienie (mały plik)
+        pdf.save(str(wyjscie), garbage=4, deflate=True, clean=True)
         return pdf.page_count
     finally:
         pdf.close()
+
+
+class _bez_zmian:
+    def __enter__(self):
+        return self
+
+    def __exit__(self, *a):
+        return False
 
 
 class RysunekTla:
@@ -87,30 +201,9 @@ class RysunekTla:
         self.x, self.y, self.szer, self.wys = x, y, szer, wys
 
 
-def _wklej_tla(strona, tla: list[RysunekTla], page) -> None:
-    """Wkleja obrazy tła na stronę PDF (PyMuPDF). Współrzędne mm -> punkty (1 mm = 72/25.4 pt).
-    Układ mm: od lewego górnego rogu strony (tak jak w PDF)."""
-    import pymupdf
-
-    na_pt = 72.0 / 25.4
-    # strona PDF może być nieco mniejsza niż nominał (zaokrąglenia) - przeskaluj mm->pt
-    # tak, by pokryć się z rzeczywistym rozmiarem strony
-    sx = strona.rect.width / (page.width * na_pt)
-    sy = strona.rect.height / (page.height * na_pt)
-    for t in tla:
-        if not t.plik.exists():
-            continue
-        x0 = t.x * na_pt * sx
-        y0 = t.y * na_pt * sy
-        x1 = (t.x + t.szer) * na_pt * sx
-        y1 = (t.y + t.wys) * na_pt * sy
-        strona.insert_image(pymupdf.Rect(x0, y0, x1, y1), filename=str(t.plik),
-                            overlay=False, keep_proportion=False)
-
-
 # --------------------------------------------------------- geometria rzutni orientacji
 
-def tla_z_rzutni(psp, obrazy, margines_strony_mm: float = 0.0) -> list[RysunekTla]:
+def tla_z_rzutni(psp, obrazy) -> list[RysunekTla]:
     """Dla układu orientacji: przelicza obrazy IMAGE (model) na pozycje w mm papieru.
 
     psp     - przestrzeń papieru układu (zawiera rzutnię z widokiem modelu),
@@ -121,35 +214,26 @@ def tla_z_rzutni(psp, obrazy, margines_strony_mm: float = 0.0) -> list[RysunekTl
     vp = _rzutnia(psp)
     if vp is None:
         return []
-    # środek rzutni na papierze [mm od lewego dolnego rogu arkusza]
-    cx_mm, cy_mm = vp.dxf.center.x, vp.dxf.center.y
+    cx_mm, cy_mm = vp.dxf.center.x, vp.dxf.center.y  # środek rzutni na papierze [mm]
     w_mm, h_mm = vp.dxf.width, vp.dxf.height
-    # widok w terenie
-    vcx, vcy = vp.dxf.view_center_point.x, vp.dxf.view_center_point.y
+    vcx, vcy = vp.dxf.view_center_point.x, vp.dxf.view_center_point.y  # środek widoku [m]
     view_h = vp.dxf.view_height
     view_w = view_h * (w_mm / h_mm) if h_mm else view_h
-    if view_w == 0 or view_h == 0:
+    if not view_w or not view_h:
         return []
     skala_x = w_mm / view_w   # mm papieru na metr terenu
     skala_y = h_mm / view_h
-    # wysokość strony (do zamiany osi Y: DXF rośnie w górę, PDF w dół)
     strona_h_mm = _wysokosc_strony_mm(psp)
 
-    def na_papier(mx, my):
-        # metr terenu -> mm od lewego dolnego rogu arkusza
-        px = cx_mm + (mx - vcx) * skala_x
-        py = cy_mm + (my - vcy) * skala_y
-        return px, py
+    def na_papier(mx, my):  # metr terenu -> mm od lewego dolnego rogu arkusza
+        return cx_mm + (mx - vcx) * skala_x, cy_mm + (my - vcy) * skala_y
 
     wynik = []
     for plik, x0_m, y0_m, szer_m, wys_m in obrazy:
-        # lewy górny róg obrazu w terenie
-        lx_mm, gy_mm = na_papier(x0_m, y0_m + wys_m)
-        pszer = szer_m * skala_x
-        pwys = wys_m * skala_y
-        # zamiana na układ "od lewego górnego rogu strony"
-        y_od_gory = strona_h_mm - gy_mm
-        wynik.append(RysunekTla(plik, lx_mm, y_od_gory, pszer, pwys))
+        lx_mm, gy_mm = na_papier(x0_m, y0_m + wys_m)  # lewy górny róg obrazu
+        # oś Y: DXF rośnie w górę, PDF w dół -> licz od góry strony
+        wynik.append(RysunekTla(plik, lx_mm, strona_h_mm - gy_mm,
+                                szer_m * skala_x, wys_m * skala_y))
     return wynik
 
 
@@ -159,9 +243,5 @@ def _rzutnia(psp):
 
 
 def _wysokosc_strony_mm(psp) -> float:
-    a = psp.dxf_layout.dxfattribs()
-    h = a.get("paper_height")
-    if h:
-        return float(h)
-    page = layout.Page.from_dxf_layout(psp)
-    return page.height
+    h = psp.dxf_layout.dxfattribs().get("paper_height")
+    return float(h) if h else layout.Page.from_dxf_layout(psp).height

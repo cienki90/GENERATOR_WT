@@ -48,6 +48,7 @@ class Projekt:
         # ostatnio wygenerowany plan orientacyjny (do eksportu PDF z podkładem)
         self._orient_doc: Drawing | None = None
         self._orient_podklady: list = []
+        self._orient_podklad_arkusza: dict = {}
 
     # ------------------------------------------------------------ analiza
     def wczytaj(self, plik: str | Path) -> None:
@@ -252,6 +253,7 @@ class Projekt:
         doc.layers.add(self.cfg.warstwa_podkladu, color=7)
         zrodla = []
         podklady = []
+        podklad_arkusza: dict[str, object] = {}  # nazwa arkusza -> jego podkład (do PDF)
         for n, g in enumerate(grupy, start=1):
             obszar = unary_union([obszary[j] for j in g])
             przyr = "" if len(grupy) == 1 else f"_{n}"
@@ -262,6 +264,8 @@ class Projekt:
                                  self.cfg.katalog_kafli, postep, log, obszar=obszar)
             zrodla.append(pk.zrodlo)
             podklady.append(pk)
+            for j in g:
+                podklad_arkusza[orient[j].nazwa] = pk
             idef = doc.add_image_def(filename=plik_jpg.name, size_in_pixel=pk.piks)
             msp.add_image(idef, insert=(pk.x0, pk.y0), size_in_units=(pk.szer_m, pk.wys_m),
                           dxfattribs={"layer": self.cfg.warstwa_podkladu})
@@ -287,6 +291,7 @@ class Projekt:
         doc.saveas(str(wyjscie))
         self._orient_doc = doc
         self._orient_podklady = podklady
+        self._orient_podklad_arkusza = podklad_arkusza
         self._orient_arkusze = orient
         return orient
 
@@ -303,7 +308,8 @@ class Projekt:
         if not nazwy:
             raise ValueError("Plik numeracji nie ma arkuszy 1:1000 - włącz arkusze przy "
                              "zapisie DXF.")
-        return _pdf.eksportuj_uklady(self.doc, wyjscie, nazwy, log=log)
+        return _pdf.eksportuj_uklady(self.doc, wyjscie, nazwy,
+                                     warstwa_numeracji=self.cfg.warstwa_numeracji, log=log)
 
     def zapisz_orientacje_pdf(self, wyjscie: Path, log=print) -> int:
         """Zapisuje plan orientacyjny do PDF (po jednym arkuszu 0.A, 0.B, … na stronę).
@@ -316,10 +322,11 @@ class Projekt:
         doc = self._orient_doc
         nazwy = [n for n in doc.layouts.names() if n != "Model"]
         nazwy.sort(key=lambda n: (len(n), n))  # 0.A, 0.B, …, 0.AA
-        obrazy = [(pk.plik, pk.x0, pk.y0, pk.szer_m, pk.wys_m) for pk in self._orient_podklady]
         obrazy_tla = {}
         for nazwa in nazwy:
             psp = doc.paperspace(nazwa)
+            pk = self._orient_podklad_arkusza.get(nazwa)
+            obrazy = [(pk.plik, pk.x0, pk.y0, pk.szer_m, pk.wys_m)] if pk else []
             obrazy_tla[nazwa] = _pdf.tla_z_rzutni(psp, obrazy)
         return _pdf.eksportuj_uklady(doc, wyjscie, nazwy, obrazy_tla=obrazy_tla, log=log)
 
