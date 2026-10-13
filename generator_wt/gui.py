@@ -10,7 +10,7 @@ from pathlib import Path
 
 from PySide6.QtCore import QDate, QObject, QSettings, Qt, QThread, QTimer, Signal
 from PySide6.QtCore import QPointF, QRectF
-from PySide6.QtGui import QColor, QFont, QPainter, QPen
+from PySide6.QtGui import QColor, QFont, QImage, QPainter, QPen
 from PySide6.QtWidgets import (
     QAbstractItemView, QApplication, QCheckBox, QComboBox, QDateEdit, QDialog,
     QDialogButtonBox, QDoubleSpinBox,
@@ -62,6 +62,19 @@ QLabel#info { color: #4a5360; }
 QLabel#ok { color: #1f7a3a; }
 QLabel#ostrz { color: #b35c00; }
 """
+
+class SpinBox(QSpinBox):
+    """QSpinBox, który ignoruje kółko myszy (żeby przewijanie strony nie zmieniało
+    wartości przez przypadek). Strzałki i klawiatura działają normalnie."""
+    def wheelEvent(self, ev):
+        ev.ignore()
+
+
+class DoubleSpinBox(QDoubleSpinBox):
+    """QDoubleSpinBox ignorujący kółko myszy (jak SpinBox)."""
+    def wheelEvent(self, ev):
+        ev.ignore()
+
 
 KOLUMNY = [  # (nagłówek, atrybut, edytowalna)
     ("W num.", "_wlaczony", False),  # kolumna z checkboxem (wyłączanie z numeracji)
@@ -171,10 +184,13 @@ class WidokMapy(QWidget):
       i bez numeru,
     - kółko myszy przybliża/oddala, przeciąganie przesuwa widok,
     - klik w słup zaznacza go i zgłasza sygnałem (do wyłączania w numeracji),
-      podwójny klik przełącza wykluczenie.
+      podwójny klik przełącza wykluczenie,
+    - opcjonalny podkład mapy zasadniczej (Geoportal) rysowany pod wektorem;
+      zmiana widoku zgłasza prośbę o pobranie podkładu dla nowego zakresu.
     """
     slup_klikniety = Signal(int)       # id słupa (zaznaczenie)
     slup_przelacz = Signal(int)        # id słupa (podwójny klik - wyłącz/włącz)
+    widok_zmieniony = Signal()         # zoom/pan zakończony - czas odświeżyć podkład
 
     def __init__(self):
         super().__init__()
@@ -188,9 +204,45 @@ class WidokMapy(QWidget):
         self.zaznaczony: int | None = None
         self._ostatni_pkt = None
         self._przeciaganie = False
+        # podkład mapy zasadniczej (QImage) + jego obwiednia w układzie projektu
+        self.podklad_img = None
+        self.podklad_bbox = None       # (xmin, ymin, xmax, ymax)
+        self.podklad_wlaczony = False
+        # odłożone zgłoszenie prośby o podkład (po zakończeniu zoomu/przesuwania)
+        self._zwloka_widoku = QTimer(self, singleShot=True, interval=350)
+        self._zwloka_widoku.timeout.connect(self._zglos_widok)
         self.setMinimumSize(300, 300)
         self.setMouseTracking(True)
         self.setFocusPolicy(Qt.StrongFocus)
+
+    def _zglos_widok(self):
+        if self.podklad_wlaczony and self.slupy:
+            self.widok_zmieniony.emit()
+
+    def _po_zmianie_widoku(self):
+        """Wywoływane po zoomie/przesunięciu - odłóż prośbę o nowy podkład."""
+        if self.podklad_wlaczony:
+            self._zwloka_widoku.start()
+
+    def widok_bbox(self):
+        """Obwiednia aktualnie widocznego obszaru w układzie projektu (xmin,ymin,xmax,ymax)."""
+        x0 = (0 - self.ox) / self.skala
+        x1 = (self.width() - self.ox) / self.skala
+        y1 = (self.oy - 0) / self.skala          # góra ekranu = większy Y
+        y0 = (self.oy - self.height()) / self.skala
+        return (min(x0, x1), min(y0, y1), max(x0, x1), max(y0, y1))
+
+    def ustaw_podklad(self, img, bbox):
+        self.podklad_img = img
+        self.podklad_bbox = bbox
+        self.update()
+
+    def ustaw_podklad_wlaczony(self, wl: bool):
+        self.podklad_wlaczony = wl
+        if not wl:
+            self.podklad_img = None
+            self.podklad_bbox = None
+        self.update()
 
     def ustaw(self, slupy: list, zaznaczony: int | None = None, dopasuj: bool = False):
         self.slupy = slupy
@@ -224,6 +276,7 @@ class WidokMapy(QWidget):
         self.ox = self.width() / 2 - self.skala * cx
         self.oy = self.height() / 2 + self.skala * cy
         self._dopasowano = True
+        self._po_zmianie_widoku()
 
     def _ekran(self, x, y) -> QPointF:
         return QPointF(self.ox + self.skala * x, self.oy - self.skala * y)
@@ -251,6 +304,7 @@ class WidokMapy(QWidget):
         self.ox = pos.x() - self.skala * gx
         self.oy = pos.y() + self.skala * gy
         self._dopasowano = True  # użytkownik przejął sterowanie widokiem
+        self._po_zmianie_widoku()
         self.update()
 
     def mousePressEvent(self, ev):
@@ -281,6 +335,8 @@ class WidokMapy(QWidget):
                 self.update()
 
     def mouseReleaseEvent(self, ev):
+        if self._przeciaganie:
+            self._po_zmianie_widoku()
         self._przeciaganie = False
         self._ostatni_pkt = None
 
@@ -292,6 +348,15 @@ class WidokMapy(QWidget):
         if not self.slupy:
             p.drawText(self.rect(), Qt.AlignCenter, "Brak projektu – przeanalizuj plik DXF.")
             return
+
+        # podkład mapy zasadniczej (pod wektorem), rozciągnięty wg jego georeferencji
+        if self.podklad_img is not None and self.podklad_bbox is not None:
+            bx0, by0, bx1, by1 = self.podklad_bbox
+            gl = self._ekran(bx0, by1)   # lewy-górny róg bboxu na ekranie
+            pr = self._ekran(bx1, by0)   # prawy-dolny
+            cel = QRectF(gl, pr)
+            p.setRenderHint(QPainter.SmoothPixmapTransform)
+            p.drawImage(cel, self.podklad_img)
 
         # trasa z sąsiedztwa (każda krawędź raz)
         p.setPen(QPen(QColor("#555"), 1.4))
@@ -541,9 +606,9 @@ class OknoGlowne(QMainWindow):
         g3 = QGroupBox("3. Numeracja")
         f3 = QFormLayout(g3)
         self.e_prefiks = QLineEdit(placeholderText="np. S → S1, S2…")
-        self.s_start = QSpinBox(minimum=0, maximum=99999, value=1)
-        self.s_tol = QDoubleSpinBox(minimum=0.01, maximum=50, value=self.cfg.tolerancja_slupa,
-                                    singleStep=0.5, suffix=" m", decimals=2)
+        self.s_start = SpinBox(minimum=0, maximum=99999, value=1)
+        self.s_tol = DoubleSpinBox(minimum=0.01, maximum=50, value=self.cfg.tolerancja_slupa,
+                                   singleStep=0.5, suffix=" m", decimals=2)
         self.s_tol.setToolTip("Wierzchołki bliżej niż ta odległość są traktowane jako jeden "
                               "słup (błędny klik). Zmiana wymaga ponownej analizy.")
         self.cb_kier = QCheckBox("Odnośnik po stronie z dala od linii")
@@ -564,8 +629,8 @@ class OknoGlowne(QMainWindow):
         self.cb_pdf_num.setToolTip("Wielostronicowy PDF: po jednym arkuszu 1:1000 na stronę A3")
         self.cb_dxf.toggled.connect(self.cb_arkusze.setEnabled)
         self.cb_arkusze.toggled.connect(self.cb_pdf_num.setEnabled)
-        self.s_zakladka = QSpinBox(minimum=0, maximum=200, value=int(self.cfg.zakladka),
-                                   suffix=" m")
+        self.s_zakladka = SpinBox(minimum=0, maximum=200, value=int(self.cfg.zakladka),
+                                  suffix=" m")
         self.s_zakladka.setToolTip("Wspólny odcinek trasy na sąsiednich arkuszach")
         # przeliczenie arkuszy dopiero po chwili bez zmian (nie przy każdym kliknięciu strzałki)
         self._zwloka_arkuszy = QTimer(self, singleShot=True, interval=700)
@@ -685,6 +750,13 @@ class OknoGlowne(QMainWindow):
         pasek_mapy.setContentsMargins(6, 6, 6, 0)
         self.l_mapa = QLabel("Klik = zaznacz słup · podwójny klik = wyłącz/włącz · "
                              "kółko = zoom · przeciąganie = przesuń", objectName="info")
+        self.b_podklad = QPushButton(self.style().standardIcon(QStyle.SP_DialogYesButton),
+                                     " Mapa zasadnicza (Geoportal)")
+        self.b_podklad.setCheckable(True)
+        self.b_podklad.setChecked(False)  # domyślnie wyłączona
+        self.b_podklad.setToolTip("Podkład z Geoportalu: działki, budynki, użytki i sieci "
+                                  "uzbrojenia terenu (GESUT). Wymaga internetu.")
+        self.b_podklad.toggled.connect(self._przelacz_podklad)
         self.b_wyklucz = QPushButton(self.style().standardIcon(QStyle.SP_DialogCancelButton),
                                      " Wyłącz zaznaczony z numeracji")
         self.b_wyklucz.setToolTip("Słup wyłączony nie dostaje numeru i nie trafia do pisma, "
@@ -695,10 +767,13 @@ class OknoGlowne(QMainWindow):
                                 " Dopasuj widok")
         b_dopasuj.clicked.connect(lambda: self.mapa.ustaw(self.mapa.slupy, dopasuj=True))
         pasek_mapy.addWidget(self.l_mapa, 1)
+        pasek_mapy.addWidget(self.b_podklad)
         pasek_mapy.addWidget(self.b_wyklucz)
         pasek_mapy.addWidget(b_dopasuj)
         ml.addLayout(pasek_mapy)
         ml.addWidget(self.mapa)
+        self.mapa.widok_zmieniony.connect(self._pobierz_podklad_mapy)
+        self._watek_podkladu: QThread | None = None
         self.zakladki.addTab(mapa_panel, "Mapa")
 
         self.podglad = PodgladArkuszy()
@@ -934,6 +1009,81 @@ class OknoGlowne(QMainWindow):
     def _wyklucz_zaznaczony(self):
         if self.mapa.zaznaczony is not None:
             self._przelacz_wykluczenie(self.mapa.zaznaczony)
+
+    # -------------------------------------------------- podkład mapy zasadniczej
+    def _przelacz_podklad(self, wl: bool):
+        p = self.projekt
+        if wl and (not p or not p.slupy):
+            self.b_podklad.setChecked(False)
+            QMessageBox.information(self, "Mapa zasadnicza",
+                                    "Najpierw wczytaj i przeanalizuj projekt DXF.")
+            return
+        if wl and p.epsg is None:
+            self.b_podklad.setChecked(False)
+            QMessageBox.warning(self, "Mapa zasadnicza",
+                                "Nie rozpoznano układu współrzędnych projektu (PL-2000) – "
+                                "nie można pobrać podkładu z Geoportalu.")
+            return
+        self.mapa.ustaw_podklad_wlaczony(wl)
+        if wl:
+            self._pobierz_podklad_mapy()
+        else:
+            self.log("Mapa zasadnicza: wyłączona")
+
+    def _pobierz_podklad_mapy(self):
+        """Pobiera podkład mapy zasadniczej dla aktualnego widoku (w osobnym wątku)."""
+        p = self.projekt
+        if not p or p.epsg is None or not self.mapa.podklad_wlaczony:
+            return
+        if self._watek_podkladu is not None:  # pobieranie już trwa - pominie, dojdzie kolejne
+            return
+        bbox = self.mapa.widok_bbox()
+        # mały margines, żeby przy drobnym przesunięciu podkład nie znikał z brzegów
+        mx = (bbox[2] - bbox[0]) * 0.1
+        my = (bbox[3] - bbox[1]) * 0.1
+        bbox = (bbox[0] - mx, bbox[1] - my, bbox[2] + mx, bbox[3] + my)
+        szer = min(int(self.mapa.width() * 1.2), 2200)
+        wys = int(szer * (bbox[3] - bbox[1]) / max(bbox[2] - bbox[0], 1e-6))
+        epsg = p.epsg
+        self.l_stan.setText("Pobieranie mapy zasadniczej z Geoportalu…")
+
+        class _Pobieracz(QObject):
+            gotowe = Signal(object, object)  # (QImage|None, bbox)
+            blad = Signal(str)
+
+            def run(self):
+                from . import podklad as _pk
+                try:
+                    img = _pk.pobierz_mape_zasadnicza(bbox, epsg, szer, wys, sieci=True)
+                    dane = img.tobytes("raw", "RGB")
+                    qimg = QImage(dane, img.width, img.height, img.width * 3,
+                                  QImage.Format_RGB888).copy()
+                    self.gotowe.emit(qimg, bbox)
+                except Exception as e:  # noqa: BLE001
+                    self.blad.emit(str(e))
+
+        self._watek_podkladu = QThread(self)
+        self._pob = _Pobieracz()
+        self._pob.moveToThread(self._watek_podkladu)
+        self._watek_podkladu.started.connect(self._pob.run)
+        self._pob.gotowe.connect(self._podklad_gotowy)
+        self._pob.blad.connect(self._podklad_blad)
+        self._pob.gotowe.connect(self._watek_podkladu.quit)
+        self._pob.blad.connect(self._watek_podkladu.quit)
+        self._watek_podkladu.finished.connect(self._sprzatnij_watek_podkladu)
+        self._watek_podkladu.start()
+
+    def _podklad_gotowy(self, qimg, bbox):
+        if self.mapa.podklad_wlaczony:
+            self.mapa.ustaw_podklad(qimg, bbox)
+            self.l_stan.setText("Mapa zasadnicza: pobrana")
+
+    def _podklad_blad(self, tekst):
+        self.log("Mapa zasadnicza – błąd pobierania: " + tekst)
+        self.l_stan.setText("Mapa zasadnicza: błąd pobierania (sprawdź internet)")
+
+    def _sprzatnij_watek_podkladu(self):
+        self._watek_podkladu = None
 
     # ================================================================ widoki
     def _wypelnij_tabele(self):
