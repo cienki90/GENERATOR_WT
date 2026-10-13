@@ -37,6 +37,7 @@ class Wierzcholek:
     nr: Optional[int] = None
     etykieta: str = ""
     grupa: str = ""
+    wykluczony: bool = False   # słup pominięty w numeracji i dokumentach (zostaje w trasie)
 
     stacja_trafo: Optional[str] = None
     rodzaj_slupa: Optional[str] = None   # nN / SN

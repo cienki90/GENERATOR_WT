@@ -24,6 +24,17 @@ from shapely.geometry import Polygon, box
 OSM_URL = "https://tile.openstreetmap.org/{z}/{x}/{y}.png"
 GUGIK_WMS = "https://mapy.geoportal.gov.pl/wss/service/img/guest/TOPO/MapServer/WMSServer"
 USER_AGENT = "GeneratorWT/1.0 (projektowanie sieci telekomunikacyjnych)"
+
+# Mapa zasadnicza (do interaktywnego widoku): EGiB (działki, budynki, numery) jako
+# tło + sieci uzbrojenia terenu (GESUT) na wierzchu - wygląda jak mapa zasadnicza.
+# Obie usługi WMS GUGiK zwracają obraz od razu w układzie PL-2000 projektu.
+KIEG_WMS = "https://integracja.gugik.gov.pl/cgi-bin/KrajowaIntegracjaEwidencjiGruntow"
+KIUT_WMS = "https://integracja.gugik.gov.pl/cgi-bin/KrajowaIntegracjaUzbrojeniaTerenu"
+MZ_WARSTWY_EGIB = "dzialki,budynki,numery_dzialek,uzytki,kontury"
+MZ_WARSTWY_GESUT = ("przewod_telekomunikacyjny,przewod_elektroenergetyczny,przewod_gazowy,"
+                    "przewod_wodociagowy,przewod_kanalizacyjny,przewod_cieplowniczy,"
+                    "przewod_niezidentyfikowany,przewod_urzadzenia")
+ATRYBUCJA_MZ = "Mapa zasadnicza (EGiB + GESUT) © GUGiK / Geoportal (geoportal.gov.pl)"
 R_ZIEMI = 6378137.0
 POL_OBW = math.pi * R_ZIEMI
 MAKS_PIKSELI = 60_000_000
@@ -218,3 +229,44 @@ def pobierz(bbox, epsg: int, mianownik: int, plik_jpg: Path, szarosc: bool = Fal
     plik_jpg.with_suffix(".jgw").write_text(
         f"{rozdz:.6f}\n0\n0\n{-rozdz:.6f}\n{xmin + rozdz / 2:.3f}\n{ymax - rozdz / 2:.3f}\n")
     return Podklad(plik_jpg, xmin, ymax - H * rozdz, W * rozdz, H * rozdz, (W, H), uzyte)
+
+
+# ------------------------------------------------------------------ mapa zasadnicza (widok)
+
+def _wms_getmap(sesja, url, warstwy, epsg, bbox, szer, wys, przezroczyste) -> Image.Image:
+    xmin, ymin, xmax, ymax = bbox
+    style = ",".join([""] * len(warstwy.split(",")))
+    r = sesja.get(url, timeout=60, params={
+        "SERVICE": "WMS", "VERSION": "1.1.1", "REQUEST": "GetMap", "LAYERS": warstwy,
+        "STYLES": style, "SRS": f"EPSG:{epsg}", "BBOX": f"{xmin},{ymin},{xmax},{ymax}",
+        "WIDTH": szer, "HEIGHT": wys, "FORMAT": "image/png",
+        "TRANSPARENT": "TRUE" if przezroczyste else "FALSE"})
+    r.raise_for_status()
+    if not r.headers.get("content-type", "").startswith("image"):
+        raise RuntimeError("Usługa WMS GUGiK nie zwróciła obrazu (sprawdź zakres/skalę).")
+    return Image.open(io.BytesIO(r.content)).convert("RGBA")
+
+
+def pobierz_mape_zasadnicza(bbox, epsg: int, szer: int, wys: int, sieci: bool = True
+                            ) -> Image.Image:
+    """Jeden obraz mapy zasadniczej dla obwiedni bbox (xmin, ymin, xmax, ymax) w układzie
+    projektu, o rozmiarze szer×wys pikseli. EGiB (działki, budynki, numery, użytki) jako
+    tło + (opcjonalnie) sieci GESUT na wierzchu. Zwraca obraz PIL (RGB).
+
+    Lekka wersja do interaktywnego widoku na ekranie - jedno żądanie WMS na warstwę,
+    bez kafli i przeliczania układu (WMS zwraca obraz wprost w EPSG projektu).
+    """
+    szer = max(1, min(int(szer), 2500))
+    wys = max(1, min(int(wys), 2500))
+    sesja = requests.Session()
+    sesja.headers["User-Agent"] = USER_AGENT
+    tlo = Image.new("RGBA", (szer, wys), (255, 255, 255, 255))
+    egib = _wms_getmap(sesja, KIEG_WMS, MZ_WARSTWY_EGIB, epsg, bbox, szer, wys, False)
+    tlo.alpha_composite(egib)
+    if sieci:
+        try:
+            gesut = _wms_getmap(sesja, KIUT_WMS, MZ_WARSTWY_GESUT, epsg, bbox, szer, wys, True)
+            tlo.alpha_composite(gesut)
+        except (requests.RequestException, RuntimeError):
+            pass  # brak sieci w tym rejonie nie jest błędem - zostaje samo EGiB
+    return tlo.convert("RGB")

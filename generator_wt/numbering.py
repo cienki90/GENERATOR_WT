@@ -80,6 +80,9 @@ def utworz_grupy(wszystkie: list[Wierzcholek], stacje: list[StacjaTrafo],
     nr_odcinka = 0
     for i in kolejnosc_trasy(wszystkie):
         w = wszystkie[i]
+        if w.wykluczony:
+            w.grupa = ""
+            continue
         if w.stacja_trafo:
             klucz = ("trafo", w.stacja_trafo)
             nazwa = w.stacja_trafo
@@ -98,7 +101,13 @@ def utworz_grupy(wszystkie: list[Wierzcholek], stacje: list[StacjaTrafo],
 
 def zaplanuj_numeracje(wszystkie: list[Wierzcholek], grupy: list[Grupa],
                        cfg: Config) -> list[Wierzcholek]:
-    """Nadaje numery ciągłe. Zwraca wierzchołki w kolejności numerów."""
+    """Nadaje numery ciągłe. Zwraca wierzchołki w kolejności numerów.
+
+    Słupy wykluczone (w.wykluczony) nie dostają numeru i nie trafiają do planu -
+    zostają jednak w self.slupy, więc trasa i arkusze obejmują je nadal."""
+    for w in wszystkie:  # wyczyść poprzednią numerację (np. po zmianie wykluczeń)
+        w.nr = None
+        w.etykieta = ""
     wynik: list[Wierzcholek] = []
     nr = cfg.numer_startowy
     for g in grupy:
