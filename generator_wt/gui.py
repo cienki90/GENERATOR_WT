@@ -179,12 +179,15 @@ class WidokMapy(QWidget):
     def __init__(self):
         super().__init__()
         self.slupy: list = []
+        # transformacja świat->ekran: ekran = (ox + skala*x, oy - skala*y)
+        # (oś Y w geodezji rośnie w górę, na ekranie w dół -> minus przy skala*y)
         self.skala = 1.0
         self.ox = 0.0
         self.oy = 0.0
         self._dopasowano = False
         self.zaznaczony: int | None = None
         self._ostatni_pkt = None
+        self._przeciaganie = False
         self.setMinimumSize(300, 300)
         self.setMouseTracking(True)
         self.setFocusPolicy(Qt.StrongFocus)
@@ -197,32 +200,35 @@ class WidokMapy(QWidget):
             self._dopasuj()
         self.update()
 
+    def resizeEvent(self, ev):
+        # dopasuj widok, dopóki użytkownik sam nie przybliżył/przesunął
+        if self.slupy and not self._dopasowano:
+            self._dopasuj()
+        super().resizeEvent(ev)
+
     def _zakres(self):
         xs = [w.x for w in self.slupy]
         ys = [w.y for w in self.slupy]
         return min(xs), max(xs), min(ys), max(ys)
 
     def _dopasuj(self):
-        if not self.slupy:
+        if not self.slupy or self.width() < 2 or self.height() < 2:
             return
         x0, x1, y0, y1 = self._zakres()
         m = 40
         szer = max(x1 - x0, 1e-6)
         wys = max(y1 - y0, 1e-6)
         self.skala = min((self.width() - 2 * m) / szer, (self.height() - 2 * m) / wys)
-        self.ox = m + ((self.width() - 2 * m) - szer * self.skala) / 2 - x0 * self.skala
-        self.oy = m + ((self.height() - 2 * m) - wys * self.skala) / 2 - y0 * self.skala
-        # oś Y rośnie w górę -> przeliczana osobno w _ekran
-        self._y_bazowe = (y0, y1)
+        # środek rysunku na środku widżetu
+        cx, cy = (x0 + x1) / 2, (y0 + y1) / 2
+        self.ox = self.width() / 2 - self.skala * cx
+        self.oy = self.height() / 2 + self.skala * cy
         self._dopasowano = True
 
-    def _ekran(self, x, y):
-        # współrzędne geodezyjne (Y w górę) -> ekran (Y w dół)
-        y0, y1 = getattr(self, "_y_bazowe", (0, 0))
-        return QPointF(self.ox + x * self.skala,
-                       self.oy + (y1 - (y - y0) - y0) * self.skala)
+    def _ekran(self, x, y) -> QPointF:
+        return QPointF(self.ox + self.skala * x, self.oy - self.skala * y)
 
-    def _slup_przy(self, px, py, prog=10):
+    def _slup_przy(self, px, py, prog=12):
         """id słupa, którego punkt ekranowy leży najbliżej (px, py) w promieniu prog [px]."""
         najbl, najd = None, prog
         for w in self.slupy:
@@ -238,17 +244,18 @@ class WidokMapy(QWidget):
             return
         pos = ev.position()
         k = 1.2 if ev.angleDelta().y() > 0 else 1 / 1.2
-        # przybliżanie względem kursora
-        y0, y1 = getattr(self, "_y_bazowe", (0, 0))
+        # punkt świata pod kursorem ma zostać w tym samym miejscu po zoomie
         gx = (pos.x() - self.ox) / self.skala
-        gy_ekr = (pos.y() - self.oy) / self.skala
+        gy = (self.oy - pos.y()) / self.skala
         self.skala *= k
-        self.ox = pos.x() - gx * self.skala
-        self.oy = pos.y() - gy_ekr * self.skala
+        self.ox = pos.x() - self.skala * gx
+        self.oy = pos.y() + self.skala * gy
+        self._dopasowano = True  # użytkownik przejął sterowanie widokiem
         self.update()
 
     def mousePressEvent(self, ev):
         self._ostatni_pkt = ev.position()
+        self._przeciaganie = False
         if ev.button() == Qt.LeftButton and self.slupy:
             i = self._slup_przy(ev.position().x(), ev.position().y())
             if i is not None:
@@ -263,14 +270,19 @@ class WidokMapy(QWidget):
                 self.slup_przelacz.emit(i)
 
     def mouseMoveEvent(self, ev):
-        if ev.buttons() & Qt.LeftButton and self._ostatni_pkt is not None:
+        if (ev.buttons() & Qt.LeftButton) and self._ostatni_pkt is not None:
             d = ev.position() - self._ostatni_pkt
-            # przesuwaj tylko, gdy to przeciąganie tła (nie zaznaczanie słupa)
-            if abs(d.x()) + abs(d.y()) > 2:
+            if self._przeciaganie or abs(d.x()) + abs(d.y()) > 3:
+                self._przeciaganie = True
                 self.ox += d.x()
                 self.oy += d.y()
                 self._ostatni_pkt = ev.position()
+                self._dopasowano = True
                 self.update()
+
+    def mouseReleaseEvent(self, ev):
+        self._przeciaganie = False
+        self._ostatni_pkt = None
 
     # -------------------------------------------------- rysowanie
     def paintEvent(self, _):
