@@ -22,7 +22,9 @@ Wersję `.exe` buduje się ręcznie: GitHub → Actions → „Wersja Windows (.
    - pobiera z GUGiK miejscowość, ulicę, gminę i działkę,
    - sprawdza ulice: porównuje ulicę z najbliższego adresu z nazwanymi drogami z OpenStreetMap w promieniu 30 m od słupu. Niezgodności pokazuje w „Kontroli projektu” i podświetla w wykazie. Przycisk „Przyjmij ulice z dróg” zamienia je na nazwę drogi.
 2. **Zlecenie:** wybierz operatora i rejon domyślny. Nowego operatora dodasz przyciskiem „Dodaj operatora po NIP…”: nazwa, adres i REGON pochodzą z GUS (jeśli podasz klucz API REGON) albo z białej listy podatników VAT (MF), a numer wpisu z rejestru przedsiębiorców telekomunikacyjnych UKE. Dane można poprawić przed zapisem. Dla operatora, który już jest na liście, program aktualizuje tylko dane z rejestrów. Rejon dobierany jest według gminy z listy w `dane/slowniki.xlsx`, a dla gmin spoza listy używany jest rejon domyślny. Listy edytujesz przyciskiem „Edytuj listy”.
-3. Sprawdź zakładki „Wykaz słupów” i „Kontrola projektu”. W wykazie możesz poprawić miejscowość, ulicę, gminę, rodzaj i typ słupa oraz uwagi.
+3. Sprawdź zakładki „Wykaz słupów”, „Mapa” i „Kontrola projektu”. W wykazie możesz poprawić miejscowość, ulicę, gminę, rodzaj i typ słupa oraz uwagi.
+   - **Mapa:** zakładka pokazuje trasę `!tele` ze słupami i ich numeracją. Kółko myszy przybliża/oddala, przeciąganie przesuwa widok, „Dopasuj widok” wraca do całości. Klik zaznacza słup, podwójny klik wyłącza go z numeracji (albo włącza z powrotem).
+   - **Wyłączanie słupów:** każdy słup można wyłączyć z numeracji — w wykazie odznacz pole w kolumnie „W num.”, na mapie kliknij słup i użyj „Wyłącz zaznaczony z numeracji” albo kliknij go podwójnie. Wyłączony słup zostaje na trasie (arkusze i podkład obejmują go nadal), ale nie dostaje numeru i nie trafia do numeracji DXF, pisma ani zestawień. Pozostałe słupy numerowane są dalej ciągle. Lista wyłączonych jest w „Kontroli projektu”.
 4. Kliknij **Numeruj i generuj dokumenty**. Program pokaże plan i zapyta o potwierdzenie, a potem o układ współrzędnych w piśmie i zestawieniach: PL-2000 albo WGS 84.
 
 ### Numeracja

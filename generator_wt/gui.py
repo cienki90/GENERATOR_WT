@@ -1,6 +1,7 @@
 """Okno programu Generator WT (PySide6 / Qt)."""
 from __future__ import annotations
 
+import math
 import os
 import subprocess
 import sys
@@ -63,6 +64,7 @@ QLabel#ostrz { color: #b35c00; }
 """
 
 KOLUMNY = [  # (nagłówek, atrybut, edytowalna)
+    ("W num.", "_wlaczony", False),  # kolumna z checkboxem (wyłączanie z numeracji)
     ("Nr", "etykieta", False), ("Stacja trafo", "stacja_trafo", False),
     ("Nr w sieci", "nr_w_sieci", True),
     ("Miejscowość", "miejscowosc", True), ("Ulica", "ulica", True),
@@ -159,6 +161,167 @@ class PodgladArkuszy(QWidget):
             p.setPen(kolory[i % len(kolory)])
             r = QRectF(pt(a.x0, a.y0 + a.wys), pt(a.x0 + a.szer, a.y0))
             p.drawText(r, Qt.AlignCenter, a.nazwa)
+
+
+class WidokMapy(QWidget):
+    """Podgląd rysunku DXF: trasa !tele, słupy i ich numeracja.
+
+    - trasa rysowana z sąsiedztwa słupów (niezależnie od numeracji),
+    - każdy słup to punkt z etykietą numeru; wykluczone słupy są szare, przekreślone
+      i bez numeru,
+    - kółko myszy przybliża/oddala, przeciąganie przesuwa widok,
+    - klik w słup zaznacza go i zgłasza sygnałem (do wyłączania w numeracji),
+      podwójny klik przełącza wykluczenie.
+    """
+    slup_klikniety = Signal(int)       # id słupa (zaznaczenie)
+    slup_przelacz = Signal(int)        # id słupa (podwójny klik - wyłącz/włącz)
+
+    def __init__(self):
+        super().__init__()
+        self.slupy: list = []
+        self.skala = 1.0
+        self.ox = 0.0
+        self.oy = 0.0
+        self._dopasowano = False
+        self.zaznaczony: int | None = None
+        self._ostatni_pkt = None
+        self.setMinimumSize(300, 300)
+        self.setMouseTracking(True)
+        self.setFocusPolicy(Qt.StrongFocus)
+
+    def ustaw(self, slupy: list, zaznaczony: int | None = None, dopasuj: bool = False):
+        self.slupy = slupy
+        if zaznaczony is not None:
+            self.zaznaczony = zaznaczony
+        if dopasuj or not self._dopasowano:
+            self._dopasuj()
+        self.update()
+
+    def _zakres(self):
+        xs = [w.x for w in self.slupy]
+        ys = [w.y for w in self.slupy]
+        return min(xs), max(xs), min(ys), max(ys)
+
+    def _dopasuj(self):
+        if not self.slupy:
+            return
+        x0, x1, y0, y1 = self._zakres()
+        m = 40
+        szer = max(x1 - x0, 1e-6)
+        wys = max(y1 - y0, 1e-6)
+        self.skala = min((self.width() - 2 * m) / szer, (self.height() - 2 * m) / wys)
+        self.ox = m + ((self.width() - 2 * m) - szer * self.skala) / 2 - x0 * self.skala
+        self.oy = m + ((self.height() - 2 * m) - wys * self.skala) / 2 - y0 * self.skala
+        # oś Y rośnie w górę -> przeliczana osobno w _ekran
+        self._y_bazowe = (y0, y1)
+        self._dopasowano = True
+
+    def _ekran(self, x, y):
+        # współrzędne geodezyjne (Y w górę) -> ekran (Y w dół)
+        y0, y1 = getattr(self, "_y_bazowe", (0, 0))
+        return QPointF(self.ox + x * self.skala,
+                       self.oy + (y1 - (y - y0) - y0) * self.skala)
+
+    def _slup_przy(self, px, py, prog=10):
+        """id słupa, którego punkt ekranowy leży najbliżej (px, py) w promieniu prog [px]."""
+        najbl, najd = None, prog
+        for w in self.slupy:
+            e = self._ekran(w.x, w.y)
+            d = math.hypot(e.x() - px, e.y() - py)
+            if d <= najd:
+                najd, najbl = d, w.id
+        return najbl
+
+    # -------------------------------------------------- interakcja
+    def wheelEvent(self, ev):
+        if not self.slupy:
+            return
+        pos = ev.position()
+        k = 1.2 if ev.angleDelta().y() > 0 else 1 / 1.2
+        # przybliżanie względem kursora
+        y0, y1 = getattr(self, "_y_bazowe", (0, 0))
+        gx = (pos.x() - self.ox) / self.skala
+        gy_ekr = (pos.y() - self.oy) / self.skala
+        self.skala *= k
+        self.ox = pos.x() - gx * self.skala
+        self.oy = pos.y() - gy_ekr * self.skala
+        self.update()
+
+    def mousePressEvent(self, ev):
+        self._ostatni_pkt = ev.position()
+        if ev.button() == Qt.LeftButton and self.slupy:
+            i = self._slup_przy(ev.position().x(), ev.position().y())
+            if i is not None:
+                self.zaznaczony = i
+                self.slup_klikniety.emit(i)
+                self.update()
+
+    def mouseDoubleClickEvent(self, ev):
+        if ev.button() == Qt.LeftButton and self.slupy:
+            i = self._slup_przy(ev.position().x(), ev.position().y())
+            if i is not None:
+                self.slup_przelacz.emit(i)
+
+    def mouseMoveEvent(self, ev):
+        if ev.buttons() & Qt.LeftButton and self._ostatni_pkt is not None:
+            d = ev.position() - self._ostatni_pkt
+            # przesuwaj tylko, gdy to przeciąganie tła (nie zaznaczanie słupa)
+            if abs(d.x()) + abs(d.y()) > 2:
+                self.ox += d.x()
+                self.oy += d.y()
+                self._ostatni_pkt = ev.position()
+                self.update()
+
+    # -------------------------------------------------- rysowanie
+    def paintEvent(self, _):
+        p = QPainter(self)
+        p.setRenderHint(QPainter.Antialiasing)
+        p.fillRect(self.rect(), QColor("white"))
+        if not self.slupy:
+            p.drawText(self.rect(), Qt.AlignCenter, "Brak projektu – przeanalizuj plik DXF.")
+            return
+
+        # trasa z sąsiedztwa (każda krawędź raz)
+        p.setPen(QPen(QColor("#555"), 1.4))
+        narysowane = set()
+        for w in self.slupy:
+            a = self._ekran(w.x, w.y)
+            for n in w.sasiedzi:
+                if (w.id, n) in narysowane:
+                    continue
+                narysowane |= {(w.id, n), (n, w.id)}
+                b = self.slupy[n]
+                p.drawLine(a, self._ekran(b.x, b.y))
+
+        # słupy i etykiety
+        f = QFont(self.font())
+        f.setPointSize(9)
+        f.setBold(True)
+        p.setFont(f)
+        for w in self.slupy:
+            e = self._ekran(w.x, w.y)
+            wybrany = w.id == self.zaznaczony
+            if w.wykluczony:
+                kol = QColor("#9aa3ae")
+            elif wybrany:
+                kol = QColor("#d62728")
+            else:
+                kol = QColor("#1d4e89")
+            r = 6 if wybrany else 4
+            p.setPen(QPen(kol, 2 if wybrany else 1))
+            p.setBrush(QColor("#ffffff") if w.wykluczony else kol)
+            p.drawEllipse(e, r, r)
+            if w.wykluczony:
+                # przekreślenie
+                p.setPen(QPen(QColor("#c62828"), 1.5))
+                p.drawLine(QPointF(e.x() - r, e.y() - r), QPointF(e.x() + r, e.y() + r))
+                p.drawLine(QPointF(e.x() - r, e.y() + r), QPointF(e.x() + r, e.y() - r))
+            etyk = w.etykieta if (w.etykieta and not w.wykluczony) else ("—" if w.wykluczony
+                                                                         else "")
+            if etyk:
+                p.setPen(kol)
+                p.drawText(QRectF(e.x() + 6, e.y() - 16, 60, 14), Qt.AlignLeft | Qt.AlignVCenter,
+                           etyk)
 
 
 class DialogOperatora(QDialog):
@@ -500,6 +663,32 @@ class OknoGlowne(QMainWindow):
         self.zakladka_kontroli = kontrola
         self.zakladki.addTab(kontrola, "Kontrola projektu")
 
+        self.mapa = WidokMapy()
+        self.mapa.slup_klikniety.connect(self._slup_z_mapy)
+        self.mapa.slup_przelacz.connect(self._przelacz_wykluczenie)
+        mapa_panel = QWidget()
+        ml = QVBoxLayout(mapa_panel)
+        ml.setContentsMargins(0, 0, 0, 0)
+        pasek_mapy = QHBoxLayout()
+        pasek_mapy.setContentsMargins(6, 6, 6, 0)
+        self.l_mapa = QLabel("Klik = zaznacz słup · podwójny klik = wyłącz/włącz · "
+                             "kółko = zoom · przeciąganie = przesuń", objectName="info")
+        self.b_wyklucz = QPushButton(self.style().standardIcon(QStyle.SP_DialogCancelButton),
+                                     " Wyłącz zaznaczony z numeracji")
+        self.b_wyklucz.setToolTip("Słup wyłączony nie dostaje numeru i nie trafia do pisma, "
+                                  "zestawień ani numeracji DXF (zostaje na trasie).")
+        self.b_wyklucz.clicked.connect(self._wyklucz_zaznaczony)
+        self.b_wyklucz.setEnabled(False)
+        b_dopasuj = QPushButton(self.style().standardIcon(QStyle.SP_FileDialogListView),
+                                " Dopasuj widok")
+        b_dopasuj.clicked.connect(lambda: self.mapa.ustaw(self.mapa.slupy, dopasuj=True))
+        pasek_mapy.addWidget(self.l_mapa, 1)
+        pasek_mapy.addWidget(self.b_wyklucz)
+        pasek_mapy.addWidget(b_dopasuj)
+        ml.addLayout(pasek_mapy)
+        ml.addWidget(self.mapa)
+        self.zakladki.addTab(mapa_panel, "Mapa")
+
         self.podglad = PodgladArkuszy()
         self.zakladki.addTab(self.podglad, "Arkusze")
 
@@ -673,6 +862,9 @@ class OknoGlowne(QMainWindow):
             info += f"<br><span style='color:#b35c00'>Bez adresu (błąd usługi): {bledy_geo} "
             info += "– uruchom analizę ponownie.</span>"
         self.l_info.setText(info)
+        self.mapa._dopasowano = False  # nowy projekt - dopasuj widok mapy
+        self.mapa.zaznaczony = None
+        self.b_wyklucz.setEnabled(False)
         self._wypelnij_tabele()
         self._wypelnij_kontrole()
         self.log(f"Analiza zakończona: {len(p.slupy)} słupów, {len(p.bledne_kliki)} "
@@ -689,29 +881,84 @@ class OknoGlowne(QMainWindow):
             self._wypelnij_tabele()
             self._wypelnij_kontrole()
 
+    def _przelicz_po_wykluczeniu(self):
+        """Po zmianie wykluczenia słupa: numeracja od nowa, wykaz, kontrola i mapa."""
+        p = self.projekt
+        if not p:
+            return
+        p.planuj()
+        p.odswiez_miejscowosci_arkuszy()
+        self._wypelnij_tabele()
+        self._wypelnij_kontrole()  # odświeża też mapę przez _odswiez_podglad
+        wykl = sum(1 for w in p.slupy if w.wykluczony)
+        self.log(f"Numeracja: {len(p.plan)} słupów"
+                 + (f" · wyłączonych: {wykl}" if wykl else ""))
+
+    # -------------------------------------------------- wyłączanie słupów (mapa + wykaz)
+    def _slup_z_mapy(self, slup_id: int):
+        """Klik w słup na mapie: zaznacz go też w wykazie i uaktywnij przycisk."""
+        self.b_wyklucz.setEnabled(True)
+        w = self.projekt.slupy[slup_id] if self.projekt else None
+        if w is not None:
+            self.b_wyklucz.setText(" Włącz zaznaczony do numeracji" if w.wykluczony
+                                   else " Wyłącz zaznaczony z numeracji")
+        # zaznacz odpowiedni wiersz w wykazie
+        for r in range(self.tabela.rowCount()):
+            it = self.tabela.item(r, 0)
+            if it and it.data(Qt.UserRole) == slup_id:
+                self.tabela.selectRow(r)
+                break
+
+    def _przelacz_wykluczenie(self, slup_id: int):
+        p = self.projekt
+        if not p:
+            return
+        w = p.slupy[slup_id]
+        p.ustaw_wykluczenie(w, not w.wykluczony)
+        self.mapa.zaznaczony = slup_id
+        self._przelicz_po_wykluczeniu()
+        self._slup_z_mapy(slup_id)
+
+    def _wyklucz_zaznaczony(self):
+        if self.mapa.zaznaczony is not None:
+            self._przelacz_wykluczenie(self.mapa.zaznaczony)
+
     # ================================================================ widoki
     def _wypelnij_tabele(self):
         p = self.projekt
         if not p:
             return
         self.tabela.blockSignals(True)
-        self.tabela.setRowCount(len(p.plan))
+        slupy = p.slupy_trasa()  # wszystkie słupy (też wykluczone), w kolejności trasy
+        self.tabela.setRowCount(len(slupy))
         szary = QColor("#f0f2f5")
-        for r, w in enumerate(p.plan):
-            for k, (_, atr, edyt) in enumerate(KOLUMNY):
-                v = getattr(w, atr)
-                if isinstance(v, float):
-                    v = f"{v:.{self.cfg.miejsca_po_przecinku}f}"
-                it = QTableWidgetItem("" if v is None else str(v))
+        wykl_tlo = QColor("#eceef1")
+        for r, w in enumerate(slupy):
+            for k, (naglowek, atr, edyt) in enumerate(KOLUMNY):
+                if atr == "_wlaczony":
+                    it = QTableWidgetItem()
+                    it.setFlags((it.flags() | Qt.ItemIsUserCheckable) & ~Qt.ItemIsEditable)
+                    it.setCheckState(Qt.Unchecked if w.wykluczony else Qt.Checked)
+                    it.setToolTip("Odznacz, aby wyłączyć słup z numeracji i dokumentów")
+                    it.setTextAlignment(Qt.AlignCenter)
+                else:
+                    v = getattr(w, atr)
+                    if isinstance(v, float):
+                        v = f"{v:.{self.cfg.miejsca_po_przecinku}f}"
+                    it = QTableWidgetItem("" if v is None else str(v))
+                    if not edyt:
+                        it.setFlags(it.flags() & ~Qt.ItemIsEditable)
+                        it.setBackground(szary)
+                    if atr == "uwagi" and w.uwagi:
+                        it.setForeground(QColor("#b35c00"))
+                    if atr in ("ulica", "ulica_droga") and w.ulica_zgodna is False:
+                        it.setBackground(QColor("#ffe2c2"))
+                        it.setToolTip("Ulica z adresu różni się od drogi, przy której stoi słup")
                 it.setData(Qt.UserRole, w.id)
-                if not edyt:
-                    it.setFlags(it.flags() & ~Qt.ItemIsEditable)
-                    it.setBackground(szary)
-                if atr == "uwagi" and w.uwagi:
-                    it.setForeground(QColor("#b35c00"))
-                if atr in ("ulica", "ulica_droga") and w.ulica_zgodna is False:
-                    it.setBackground(QColor("#ffe2c2"))
-                    it.setToolTip("Ulica z adresu różni się od drogi, przy której stoi słup")
+                if w.wykluczony:
+                    it.setForeground(QColor("#9aa3ae"))
+                    if atr not in ("ulica", "ulica_droga"):
+                        it.setBackground(wykl_tlo)
                 self.tabela.setItem(r, k, it)
         self.tabela.blockSignals(False)
         self.tabela.resizeColumnsToContents()
@@ -720,6 +967,12 @@ class OknoGlowne(QMainWindow):
         p = self.projekt
         w = p.slupy[it.data(Qt.UserRole)]
         atr = KOLUMNY[it.column()][1]
+        if atr == "_wlaczony":
+            wykluczony = it.checkState() != Qt.Checked
+            if wykluczony != w.wykluczony:
+                p.ustaw_wykluczenie(w, wykluczony)
+                self._przelicz_po_wykluczeniu()
+            return
         tekst = it.text().strip()
         setattr(w, atr, tekst if atr == "uwagi" else (tekst or None))
         if atr == "gmina":
@@ -777,7 +1030,9 @@ class OknoGlowne(QMainWindow):
                             QStyle.SP_MessageBoxWarning if dlugie else QStyle.SP_DialogApplyButton))
         czerwony, pomaranczowy = QColor("#c62828"), QColor("#b35c00")
         for d, a, b in dlugie:
-            it = QTreeWidgetItem(pr, [f"Słupy {a.etykieta} – {b.etykieta}", f"{d:.2f} m"])
+            ea = a.etykieta or "(wył.)"
+            eb = b.etykieta or "(wył.)"
+            it = QTreeWidgetItem(pr, [f"Słupy {ea} – {eb}", f"{d:.2f} m"])
             kolor = czerwony if d > self.cfg.przeslo_blad else pomaranczowy
             for k in (0, 1):
                 it.setForeground(k, kolor)
@@ -832,12 +1087,22 @@ class OknoGlowne(QMainWindow):
         for w in bez_opisu:
             QTreeWidgetItem(op, [f"Słup {w.etykieta}", f"X={w.geo_x:.2f} Y={w.geo_y:.2f}"])
 
+        wykluczone = [w for w in p.slupy if w.wykluczony]
+        wy = QTreeWidgetItem(["Słupy wyłączone z numeracji",
+                              f"{len(wykluczone)} (nie trafią do pisma ani zestawień)"])
+        wy.setIcon(0, ikona(QStyle.SP_DialogCancelButton if wykluczone
+                            else QStyle.SP_DialogApplyButton))
+        for w in sorted(wykluczone, key=lambda s: (s.stacja_trafo or "", s.nr_w_sieci or "")):
+            opis = w.nr_w_sieci and f"nr w sieci {w.nr_w_sieci}" or f"X={w.geo_x:.2f} Y={w.geo_y:.2f}"
+            QTreeWidgetItem(wy, [w.stacja_trafo or "poza strefą", opis])
+
         if p.ostrzezenia:
             o = QTreeWidgetItem(["Ostrzeżenia", str(len(p.ostrzezenia))])
             o.setIcon(0, ikona(QStyle.SP_MessageBoxWarning))
             for t in p.ostrzezenia:
                 QTreeWidgetItem(o, ["", t])
-        self.drzewo.addTopLevelItems([plan, bk, pr, ul, ar, st, ns, op] + ([o] if p.ostrzezenia else []))
+        self.drzewo.addTopLevelItems([plan, bk, pr, ul, ar, st, ns, op, wy]
+                                     + ([o] if p.ostrzezenia else []))
         plan.setExpanded(True)
         bk.setExpanded(True)
         pr.setExpanded(True)
@@ -862,6 +1127,8 @@ class OknoGlowne(QMainWindow):
     def _odswiez_podglad(self):
         from . import arkusze as ark
         p = self.projekt
+        # mapa z numeracją (działa też bez arkuszy)
+        self.mapa.ustaw(p.slupy if p else [], dopasuj=False)
         if not p or not p.arkusze:
             self.podglad.ustaw([], [], None)
             return

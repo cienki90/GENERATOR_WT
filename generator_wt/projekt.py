@@ -113,6 +113,19 @@ class Projekt:
         reader.ustaw_id_slupow(self.slupy)
         self.plan = numbering.zaplanuj_numeracje(self.slupy, self.grupy, self.cfg)
 
+    def slupy_trasa(self) -> list[Wierzcholek]:
+        """Wszystkie słupy (również wykluczone) w kolejności wzdłuż trasy -
+        do wykazu i mapy. Numerowane słupy idą zgodnie z planem."""
+        kol = numbering.kolejnosc_trasy(self.slupy)
+        return [self.slupy[i] for i in kol]
+
+    def ustaw_wykluczenie(self, slup: Wierzcholek, wykluczony: bool) -> None:
+        """Wyłącza/włącza słup w numeracji. Wykluczony słup zostaje w trasie
+        (sąsiedztwo i arkusze bez zmian), ale nie dostaje numeru i nie trafia
+        do planu, czyli znika z numeracji DXF, pisma i zestawień.
+        Po zmianie trzeba wywołać planuj()."""
+        slup.wykluczony = wykluczony
+
     def przypisz_rejony(self, rejony: list[dict], domyslny: dict | None) -> list[str]:
         """Rejon wg gminy ze słownika; gminy nieprzypisane -> rejon domyślny.
         Zwraca listę gmin, które dostały rejon domyślny."""
