@@ -88,33 +88,21 @@ KOLUMNY = [  # (nagłówek, atrybut, edytowalna)
 ]
 
 
-class Pracownik(QObject):
-    """Analiza pliku w tle: odczyt DXF + geokodowanie + plan numeracji."""
+class Zadanie(QObject):
+    """Praca w tle (analiza, arkusze, generowanie). 'praca' dostaje to zadanie i przez
+    jego sygnały zgłasza postęp i wpisy do dziennika - okno nie zamarza."""
     postep = Signal(int, int, str)
+    log = Signal(str)
     gotowe = Signal(object)
     blad = Signal(str)
 
-    def __init__(self, projekt: Projekt, plik: str, geokodowanie: bool):
+    def __init__(self, praca):
         super().__init__()
-        self.projekt, self.plik, self.geokodowanie = projekt, plik, geokodowanie
+        self.praca = praca
 
     def run(self):
         try:
-            self.postep.emit(0, 0, "Odczyt pliku DXF…")
-            self.projekt.wczytaj(self.plik)
-            bledy = 0
-            if self.geokodowanie:
-                bledy = self.projekt.geokoduj(
-                    lambda i, n: self.postep.emit(i, n, f"Pobieranie adresów z GUGiK: {i}/{n}"))
-                self.postep.emit(0, 0, "Sprawdzanie ulic (drogi OpenStreetMap)…")
-                try:
-                    self.projekt.sprawdz_ulice(log=lambda t: None)
-                except Exception as e:  # noqa: BLE001
-                    self.projekt.ostrzezenia.append(f"Sprawdzanie ulic pominięte: {e}")
-            self.projekt.planuj()
-            self.postep.emit(0, 0, "Rozmieszczanie arkuszy…")
-            self.projekt.planuj_arkusze()
-            self.gotowe.emit(bledy)
+            self.gotowe.emit(self.praca(self))
         except Exception as e:  # noqa: BLE001 - komunikat dla użytkownika
             self.blad.emit(f"{e}\n\n{traceback.format_exc()}")
 
@@ -519,7 +507,12 @@ class OknoGlowne(QMainWindow):
         self.cfg = Config()
         self.projekt: Projekt | None = None
         self.ustawienia = QSettings("GeneratorWT", "GeneratorWT")
+        # bieżące zadanie w tle (najwyżej jedno naraz) i jego wynik
         self._watek: QThread | None = None
+        self._zadanie: Zadanie | None = None
+        self._wynik_zadania: tuple | None = None
+        self._po_zadaniu = None
+        self._plik_ustawien: str | None = None  # DXF, z którego wczytano ustawienia projektu
         self.operatorzy: list[dict] = []
         self.rejony: list[dict] = []
 
@@ -697,6 +690,7 @@ class OknoGlowne(QMainWindow):
         przewijany.setWidget(lewy)
         przewijany.setMinimumWidth(400)
         podzial.addWidget(przewijany)
+        self.panel_ustawien = lewy  # blokowany na czas pracy w tle
 
         # ---------------- prawy panel
         self.zakladki = QTabWidget()
@@ -774,6 +768,7 @@ class OknoGlowne(QMainWindow):
         ml.addWidget(self.mapa)
         self.mapa.widok_zmieniony.connect(self._pobierz_podklad_mapy)
         self._watek_podkladu: QThread | None = None
+        self._podklad_oczekuje = False
         self.zakladki.addTab(mapa_panel, "Mapa")
 
         self.podglad = PodgladArkuszy()
@@ -797,10 +792,138 @@ class OknoGlowne(QMainWindow):
         self.dziennik.appendPlainText(tekst)
         self.l_stan.setText(tekst.splitlines()[0] if tekst else "")
 
-    def _stan_przyciskow(self, praca: bool = False):
+    def _stan_przyciskow(self):
+        praca = self.zajety()
         jest = self.projekt is not None and bool(self.projekt.plan)
         self.b_analizuj.setEnabled(not praca and bool(self.e_plik.text()))
         self.b_generuj.setEnabled(not praca and jest)
+
+    # ================================================================ praca w tle
+    def zajety(self) -> bool:
+        return self._watek is not None
+
+    def _uruchom(self, praca, po_zakonczeniu=None, przy_bledzie=None) -> bool:
+        """Uruchamia 'praca(zadanie)' w osobnym wątku. Na ten czas ustawienia, wykaz
+        i przyciski są zablokowane, żeby nic nie zmieniało projektu w trakcie pracy.
+        Po zakończeniu (w wątku okna) wywołuje po_zakonczeniu(wynik) albo
+        przy_bledzie(tekst). Zwraca False, gdy inna praca jeszcze trwa."""
+        if self.zajety():
+            return False
+        self._wynik_zadania = None
+        self._po_zadaniu = (po_zakonczeniu, przy_bledzie)
+        self._watek = QThread(self)
+        self._zadanie = Zadanie(praca)
+        self._zadanie.moveToThread(self._watek)
+        self._watek.started.connect(self._zadanie.run)
+        self._zadanie.postep.connect(self._postep)
+        self._zadanie.log.connect(self.log)
+        self._zadanie.gotowe.connect(self._zadanie_gotowe)
+        self._zadanie.blad.connect(self._zadanie_blad)
+        self._zadanie.gotowe.connect(self._watek.quit)
+        self._zadanie.blad.connect(self._watek.quit)
+        self._watek.finished.connect(self._zadanie_koniec)
+        self._ustaw_prace(True)
+        self._watek.start()
+        return True
+
+    def _zadanie_gotowe(self, wynik):
+        self._wynik_zadania = ("ok", wynik)
+
+    def _zadanie_blad(self, tekst):
+        self._wynik_zadania = ("blad", tekst)
+
+    def _zadanie_koniec(self):
+        """Wątek się zakończył - zwolnij go i dopiero potem obsłuż wynik
+        (obsługa może uruchomić kolejną pracę)."""
+        self._watek.deleteLater()
+        self._watek = self._zadanie = None  # obiekt zadania (bez rodzica) usunie Python
+        self._ustaw_prace(False)
+        wynik, (ok, zle) = self._wynik_zadania, self._po_zadaniu
+        self._wynik_zadania = self._po_zadaniu = None
+        if wynik and wynik[0] == "ok" and ok:
+            ok(wynik[1])
+        elif wynik and wynik[0] == "blad":
+            if zle:
+                zle(wynik[1])
+            else:
+                self.log("BŁĄD: " + wynik[1])
+                QMessageBox.critical(self, "Błąd", wynik[1].split("\n\n")[0])
+
+    def _ustaw_prace(self, praca: bool):
+        self.panel_ustawien.setEnabled(not praca)
+        self.tabela.setEnabled(not praca)
+        self.b_ulice.setEnabled(not praca and bool(self.projekt and self.projekt.niezgodne_ulice()))
+        self.b_wyklucz.setEnabled(not praca and self.mapa.zaznaczony is not None)
+        self.pasek.setVisible(praca)
+        if praca:
+            self.pasek.setRange(0, 0)
+        self._stan_przyciskow()
+
+    def closeEvent(self, ev):
+        if self.zajety():
+            QMessageBox.information(self, "Trwa praca",
+                                    "Program jeszcze pracuje (analiza lub zapis plików). "
+                                    "Poczekaj na zakończenie i zamknij okno ponownie.")
+            ev.ignore()
+            return
+        super().closeEvent(ev)
+
+    def _sprawdz_zapis_stanu(self):
+        if self.projekt and self.projekt.blad_stanu:
+            self.log("UWAGA: " + self.projekt.blad_stanu)
+
+    # ---------------------------------------------- ustawienia projektu (<projekt>.wt.json)
+    def _ustawienia_projektu(self) -> dict:
+        return {"prefiks": self.e_prefiks.text().strip(), "numer_startowy": self.s_start.value(),
+                "tolerancja_slupa": self.s_tol.value(), "zakladka": self.s_zakladka.value(),
+                "inteligentny_kierunek": self.cb_kier.isChecked(),
+                "operator": self.c_operator.currentText(), "rejon": self.c_rejon.currentText(),
+                "umowa_od": self.d_od.date().toString("dd.MM.yyyy"),
+                "umowa_do": self.e_do.text().strip()}
+
+    def _zapisz_ustawienia_projektu(self):
+        if self.projekt and self.projekt.plik and not self.zajety():
+            self.projekt.zapisz_ustawienia(self._ustawienia_projektu())
+            self._sprawdz_zapis_stanu()
+
+    def _wczytaj_ustawienia_projektu(self, plik: str):
+        """Przed analizą nowego pliku: ustawienia zapamiętane dla tego projektu."""
+        from . import stan
+        u = stan.wczytaj(stan.plik_stanu(plik)).get("ustawienia") or {}
+        self._plik_ustawien = plik
+        if not u:
+            return
+        widzety = (self.e_prefiks, self.s_start, self.s_tol, self.s_zakladka, self.cb_kier,
+                   self.c_operator, self.c_rejon, self.d_od, self.e_do)
+        for w in widzety:
+            w.blockSignals(True)
+        try:
+            if "prefiks" in u:
+                self.e_prefiks.setText(str(u["prefiks"]))
+            if "numer_startowy" in u:
+                self.s_start.setValue(int(u["numer_startowy"]))
+            if "tolerancja_slupa" in u:
+                self.s_tol.setValue(float(u["tolerancja_slupa"]))
+            if "zakladka" in u:
+                self.s_zakladka.setValue(int(u["zakladka"]))
+            if "inteligentny_kierunek" in u:
+                self.cb_kier.setChecked(bool(u["inteligentny_kierunek"]))
+            for combo, k in ((self.c_operator, "operator"), (self.c_rejon, "rejon")):
+                i = combo.findText(str(u.get(k, "")))
+                if i >= 0:
+                    combo.setCurrentIndex(i)
+            if u.get("umowa_od"):
+                d = QDate.fromString(u["umowa_od"], "dd.MM.yyyy")
+                if d.isValid():
+                    self.d_od.setDate(d)
+            if "umowa_do" in u:
+                self.e_do.setText(str(u["umowa_do"]))
+        except (TypeError, ValueError):
+            pass  # uszkodzone ustawienia - zostają bieżące
+        finally:
+            for w in widzety:
+                w.blockSignals(False)
+        self.log(f"Wczytano ustawienia projektu z {stan.plik_stanu(plik).name}")
 
     def _katalog(self) -> Path:
         if self.e_katalog.text().strip():
@@ -858,7 +981,7 @@ class OknoGlowne(QMainWindow):
         self._otworz(self.cfg.plik_slownikow)
 
     def _rejon_zmieniony(self):
-        if self.projekt and self.projekt.slupy:
+        if self.projekt and self.projekt.slupy and not self.zajety():
             bez = self.projekt.przypisz_rejony(self.rejony, self.c_rejon.currentData())
             self._wypelnij_tabele()
             if bez:
@@ -867,10 +990,12 @@ class OknoGlowne(QMainWindow):
 
     # ================================================================ plik i analiza
     def wybierz_plik(self):
+        if self.zajety():
+            return
         start = self.e_plik.text() or self.ustawienia.value("ostatni_plik", "")
         plik, _ = QFileDialog.getOpenFileName(self, "Wybierz plik projektu", start,
                                               "Rysunek DXF (*.dxf);;Wszystkie pliki (*)")
-        if plik:
+        if plik and not self.zajety():
             self.e_plik.setText(plik)
             self.ustawienia.setValue("ostatni_plik", plik)
             self._stan_przyciskow()
@@ -894,53 +1019,75 @@ class OknoGlowne(QMainWindow):
         return self.cfg
 
     def przelicz_arkusze(self):
-        if self.projekt and self.projekt.plan:
-            self._konfiguracja()
-            QApplication.setOverrideCursor(Qt.WaitCursor)
-            try:
-                self.projekt.planuj_arkusze()
-            finally:
-                QApplication.restoreOverrideCursor()
+        if not (self.projekt and self.projekt.plan):
+            return
+        if self.zajety():  # trwa inna praca - spróbuj ponownie za chwilę
+            self._zwloka_arkuszy.start()
+            return
+        self._konfiguracja()
+        p = self.projekt
+
+        def praca(z):
+            z.postep.emit(0, 0, "Rozmieszczanie arkuszy…")
+            return len(p.planuj_arkusze())
+
+        def gotowe(n):
+            self.l_stan.setText(f"Arkuszy: {n}")
             self._wypelnij_kontrole()
+            self._zapisz_ustawienia_projektu()
+        self._uruchom(praca, gotowe)
 
     def analizuj(self):
         plik = self.e_plik.text()
-        if not plik:
+        if not plik or self.zajety():
             return
-        self.projekt = Projekt(self._konfiguracja())
-        self._stan_przyciskow(praca=True)
-        self.pasek.setVisible(True)
-        self.pasek.setRange(0, 0)
+        if plik != self._plik_ustawien:  # nowy plik - ustawienia zapamiętane dla projektu
+            self._wczytaj_ustawienia_projektu(plik)
+        projekt = Projekt(self._konfiguracja())
+        geo = self.cb_geo.isChecked()
         self.log(f"Analiza: {plik}")
 
-        self._watek = QThread(self)
-        self._prac = Pracownik(self.projekt, plik, self.cb_geo.isChecked())
-        self._prac.moveToThread(self._watek)
-        self._watek.started.connect(self._prac.run)
-        self._prac.postep.connect(self._postep)
-        self._prac.gotowe.connect(self._analiza_gotowa)
-        self._prac.blad.connect(self._analiza_blad)
-        self._prac.gotowe.connect(self._watek.quit)
-        self._prac.blad.connect(self._watek.quit)
-        self._watek.start()
+        def praca(z):
+            z.postep.emit(0, 0, "Odczyt pliku DXF…")
+            projekt.wczytaj(plik)
+            bledy = 0
+            if geo:
+                bledy = projekt.geokoduj(
+                    lambda i, n: z.postep.emit(i, n, f"Pobieranie adresów z GUGiK: {i}/{n}"))
+                z.postep.emit(0, 0, "Sprawdzanie ulic (drogi OpenStreetMap)…")
+                try:
+                    projekt.sprawdz_ulice(log=lambda t: None)
+                except Exception as e:  # noqa: BLE001
+                    projekt.ostrzezenia.append(f"Sprawdzanie ulic pominięte: {e}")
+            projekt.zastosuj_stan()
+            projekt.planuj()
+            z.postep.emit(0, 0, "Rozmieszczanie arkuszy…")
+            projekt.planuj_arkusze()
+            return bledy
+
+        self._uruchom(praca, lambda bledy: self._analiza_gotowa(projekt, bledy),
+                      self._analiza_blad)
 
     def _postep(self, i, n, opis):
         if n:
             self.pasek.setRange(0, n)
             self.pasek.setValue(i)
+        else:
+            self.pasek.setRange(0, 0)  # etap bez znanej liczby kroków
         self.l_stan.setText(opis)
 
     def _analiza_blad(self, tekst):
-        self.pasek.setVisible(False)
         self.projekt = None
         self._stan_przyciskow()
         self.log("BŁĄD: " + tekst)
         QMessageBox.critical(self, "Błąd analizy", tekst.split("\n\n")[0])
 
-    def _analiza_gotowa(self, bledy_geo: int):
-        self.pasek.setVisible(False)
-        p = self.projekt
+    def _analiza_gotowa(self, projekt: Projekt, bledy_geo: int):
+        self.projekt = p = projekt
         p.przypisz_rejony(self.rejony, self.c_rejon.currentData())
+        if p.poprawek_zastosowanych:
+            self.log(f"Zastosowano zapamiętane poprawki ({p.plik_stanu.name}): "
+                     f"{p.poprawek_zastosowanych} słupów")
         info = (f"Słupów: <b>{len(p.slupy)}</b> · stref trafo: <b>{len(p.stacje)}</b> · "
                 f"błędnych klików: <b>{len(p.bledne_kliki)}</b>")
         if p.epsg:
@@ -961,12 +1108,13 @@ class OknoGlowne(QMainWindow):
         self._stan_przyciskow()
 
     def przelicz_numeracje(self):
-        if self.projekt and self.projekt.slupy:
+        if self.projekt and self.projekt.slupy and not self.zajety():
             self._konfiguracja()
             self.projekt.planuj()
             self.projekt.odswiez_miejscowosci_arkuszy()  # ułożenie arkuszy się nie zmienia
             self._wypelnij_tabele()
             self._wypelnij_kontrole()
+            self._zapisz_ustawienia_projektu()
 
     def _przelicz_po_wykluczeniu(self):
         """Po zmianie wykluczenia słupa: numeracja od nowa, wykaz, kontrola i mapa."""
@@ -977,6 +1125,7 @@ class OknoGlowne(QMainWindow):
         p.odswiez_miejscowosci_arkuszy()
         self._wypelnij_tabele()
         self._wypelnij_kontrole()  # odświeża też mapę przez _odswiez_podglad
+        self._sprawdz_zapis_stanu()
         wykl = sum(1 for w in p.slupy if w.wykluczony)
         self.log(f"Numeracja: {len(p.plan)} słupów"
                  + (f" · wyłączonych: {wykl}" if wykl else ""))
@@ -984,7 +1133,7 @@ class OknoGlowne(QMainWindow):
     # -------------------------------------------------- wyłączanie słupów (mapa + wykaz)
     def _slup_z_mapy(self, slup_id: int):
         """Klik w słup na mapie: zaznacz go też w wykazie i uaktywnij przycisk."""
-        self.b_wyklucz.setEnabled(True)
+        self.b_wyklucz.setEnabled(not self.zajety())
         w = self.projekt.slupy[slup_id] if self.projekt else None
         if w is not None:
             self.b_wyklucz.setText(" Włącz zaznaczony do numeracji" if w.wykluczony
@@ -998,7 +1147,7 @@ class OknoGlowne(QMainWindow):
 
     def _przelacz_wykluczenie(self, slup_id: int):
         p = self.projekt
-        if not p:
+        if not p or self.zajety():
             return
         w = p.slupy[slup_id]
         p.ustaw_wykluczenie(w, not w.wykluczony)
@@ -1035,8 +1184,11 @@ class OknoGlowne(QMainWindow):
         p = self.projekt
         if not p or p.epsg is None or not self.mapa.podklad_wlaczony:
             return
-        if self._watek_podkladu is not None:  # pobieranie już trwa - pominie, dojdzie kolejne
+        if self._watek_podkladu is not None:
+            # pobieranie już trwa - po jego zakończeniu pobierz jeszcze raz dla nowego widoku
+            self._podklad_oczekuje = True
             return
+        self._podklad_oczekuje = False
         bbox = self.mapa.widok_bbox()
         # mały margines, żeby przy drobnym przesunięciu podkład nie znikał z brzegów
         mx = (bbox[2] - bbox[0]) * 0.1
@@ -1083,7 +1235,10 @@ class OknoGlowne(QMainWindow):
         self.l_stan.setText("Mapa zasadnicza: błąd pobierania (sprawdź internet)")
 
     def _sprzatnij_watek_podkladu(self):
+        self._watek_podkladu.deleteLater()
         self._watek_podkladu = None
+        if self._podklad_oczekuje:  # widok zmienił się w trakcie pobierania
+            self._pobierz_podklad_mapy()
 
     # ================================================================ widoki
     def _wypelnij_tabele(self):
@@ -1127,6 +1282,8 @@ class OknoGlowne(QMainWindow):
 
     def _komorka_zmieniona(self, it: QTableWidgetItem):
         p = self.projekt
+        if not p or self.zajety():
+            return
         w = p.slupy[it.data(Qt.UserRole)]
         atr = KOLUMNY[it.column()][1]
         if atr == "_wlaczony":
@@ -1136,23 +1293,20 @@ class OknoGlowne(QMainWindow):
                 self._przelicz_po_wykluczeniu()
             return
         tekst = it.text().strip()
-        setattr(w, atr, tekst if atr == "uwagi" else (tekst or None))
+        # poprawka zapamiętywana w <projekt>.wt.json - nie przepada przy ponownej analizie
+        p.ustaw_pole(w, atr, tekst if atr == "uwagi" else (tekst or None))
+        self._sprawdz_zapis_stanu()
         if atr == "gmina":
             p.przypisz_rejony(self.rejony, self.c_rejon.currentData())
             self._wypelnij_tabele()
         elif atr == "ulica":
-            from .ulice import norm
-            if w.ulica_droga:
-                # po ręcznej poprawie: zgodna, gdy równa drodze; inaczej uznajemy decyzję
-                # użytkownika (None = nie zgłaszaj)
-                w.ulica_zgodna = True if norm(w.ulica) == norm(w.ulica_droga) else None
             self._wypelnij_tabele()
             self._wypelnij_kontrole()
         elif atr == "nr_w_sieci":
-            from .reader import ustaw_id_slupow
-            ustaw_id_slupow(p.slupy)
+            self._wypelnij_kontrole()
         elif atr == "miejscowosc":
             p.planuj()  # grupowanie wg miejscowości mogło się zmienić
+            p.odswiez_miejscowosci_arkuszy()  # miejscowości w tabelkach arkuszy
             self._wypelnij_tabele()
             self._wypelnij_kontrole()
 
@@ -1258,12 +1412,23 @@ class OknoGlowne(QMainWindow):
             opis = w.nr_w_sieci and f"nr w sieci {w.nr_w_sieci}" or f"X={w.geo_x:.2f} Y={w.geo_y:.2f}"
             QTreeWidgetItem(wy, [w.stacja_trafo or "poza strefą", opis])
 
+        poprawki = [k for k, v in p.stan["slupy"].items() if any(a != "wykluczony" for a in v)]
+        rp = QTreeWidgetItem(["Ręczne poprawki słupów", f"{len(poprawki)} · zapamiętane w "
+                              f"{p.plik_stanu.name}"])
+        rp.setIcon(0, ikona(QStyle.SP_DialogSaveButton))
+        rp.setToolTip(1, "Poprawki z wykazu (ulica, miejscowość, gmina, rodzaj, typ, nr w sieci, "
+                         "uwagi) i wyłączenia słupów są nakładane przy każdej analizie.")
+        if p.poprawek_niedopasowanych:
+            QTreeWidgetItem(rp, ["Nie pasują do rysunku",
+                                 f"{len(p.poprawek_niedopasowanych)} (słup usunięty lub "
+                                 "przesunięty o więcej niż 0,5 m)"])
+
         if p.ostrzezenia:
             o = QTreeWidgetItem(["Ostrzeżenia", str(len(p.ostrzezenia))])
             o.setIcon(0, ikona(QStyle.SP_MessageBoxWarning))
             for t in p.ostrzezenia:
                 QTreeWidgetItem(o, ["", t])
-        self.drzewo.addTopLevelItems([plan, bk, pr, ul, ar, st, ns, op, wy]
+        self.drzewo.addTopLevelItems([plan, bk, pr, ul, ar, st, ns, op, wy, rp]
                                      + ([o] if p.ostrzezenia else []))
         plan.setExpanded(True)
         bk.setExpanded(True)
@@ -1283,6 +1448,7 @@ class OknoGlowne(QMainWindow):
             return
         n = p.przyjmij_ulice_z_drog()
         self.log(f"Poprawiono ulice: {n} słupów")
+        self._sprawdz_zapis_stanu()
         self._wypelnij_tabele()
         self._wypelnij_kontrole()
 
@@ -1302,7 +1468,7 @@ class OknoGlowne(QMainWindow):
     # ================================================================ generowanie
     def generuj(self):
         p = self.projekt
-        if not p or not p.plan:
+        if not p or not p.plan or self.zajety():
             return
         if abs(self.s_tol.value() - p.tolerancja_analizy) > 1e-9:
             QMessageBox.information(self, "Zmieniono tolerancję",
@@ -1356,67 +1522,74 @@ class OknoGlowne(QMainWindow):
         self.ustawienia.setValue("opracowal", self.e_opracowal.text().strip())
         self.ustawienia.setValue("operator", self.c_operator.currentText())
         self.ustawienia.setValue("rejon", self.c_rejon.currentText())
-        zadania = []
+        self._zapisz_ustawienia_projektu()
+
+        # wszystkie wartości z okna odczytane teraz - zapis idzie w tle (okno nie zamarza)
+        arkusze = self.cb_arkusze.isChecked()
+        data_od = self.d_od.date().toString("dd.MM.yyyy")
+        data_do = self.e_do.text().strip() or "-"
+        zadania = []  # (przyrostek pliku, funkcja(cel, zadanie))
         if self.cb_dxf.isChecked():
-            zadania.append(("numeracja.dxf", lambda f: p.zapisz_dxf(
-                f, self.cb_arkusze.isChecked(), operator, opracowal, data_rys)))
-            if self.cb_arkusze.isChecked() and self.cb_pdf_num.isChecked():
-                zadania.append(("numeracja.pdf", lambda f: p.zapisz_numeracje_pdf(f, self.log)))
+            zadania.append(("numeracja.dxf", lambda f, z: p.zapisz_dxf(
+                f, arkusze, operator, opracowal, data_rys)))
+            if arkusze and self.cb_pdf_num.isChecked():
+                zadania.append(("numeracja.pdf",
+                                lambda f, z: p.zapisz_numeracje_pdf(f, z.log.emit)))
         if self.cb_pismo.isChecked():
-            zadania.append(("pismo.docx", lambda f: p.zapisz_pismo(
-                f, operator, self.d_od.date().toString("dd.MM.yyyy"),
-                self.e_do.text().strip() or "-")))
+            zadania.append(("pismo.docx", lambda f, z: p.zapisz_pismo(f, operator, data_od,
+                                                                      data_do)))
         if self.cb_rozb.isChecked():
-            zadania.append(("rozbudowana.xlsx", p.zapisz_rozbudowana))
+            zadania.append(("rozbudowana.xlsx", lambda f, z: p.zapisz_rozbudowana(f)))
         if self.cb_upr.isChecked():
-            zadania.append(("uproszczona.xls", p.zapisz_uproszczona))
+            zadania.append(("uproszczona.xls", lambda f, z: p.zapisz_uproszczona(f)))
         if self.cb_proj.isChecked():
-            zadania.append(("tabela_projektowa.xlsx", p.zapisz_projektowa))
+            zadania.append(("tabela_projektowa.xlsx", lambda f, z: p.zapisz_projektowa(f)))
 
         if self.cb_orient.isChecked():
-            def orient(f):
-                self.pasek.setVisible(True)
+            skala, szarosc = self.c_skala.currentData(), self.cb_szarosc.isChecked()
+            zrodlo, trasa = self.c_zrodlo.currentData(), self.cb_trasa_or.isChecked()
+            pdf_orient = p.sciezka(kat, "orientacja.pdf") if self.cb_pdf_orient.isChecked() \
+                else None
 
-                def post(i, n):
-                    self.pasek.setRange(0, n)
-                    self.pasek.setValue(i)
-                    self.l_stan.setText(f"Pobieranie podkładu: {i}/{n}")
-                    QApplication.processEvents()
-                try:
-                    o = p.zapisz_orientacje(f, self.c_skala.currentData(),
-                                            self.cb_szarosc.isChecked(), operator, opracowal,
-                                            data_rys, self.c_zrodlo.currentData(),
-                                            self.cb_trasa_or.isChecked(), post, self.log)
-                    self.log(f"Plan orientacyjny: arkusze {', '.join(a.nazwa for a in o)}")
-                    if self.cb_pdf_orient.isChecked():
-                        pdf = p.sciezka(self._katalog(), "orientacja.pdf")
-                        p.zapisz_orientacje_pdf(pdf, self.log)
-                        self.log(f"Zapisano: {pdf}")
-                finally:
-                    self.pasek.setVisible(False)
+            def orient(f, z):
+                o = p.zapisz_orientacje(
+                    f, skala, szarosc, operator, opracowal, data_rys, zrodlo, trasa,
+                    lambda i, n: z.postep.emit(i, n, f"Pobieranie podkładu: {i}/{n}"),
+                    z.log.emit)
+                z.log.emit(f"Plan orientacyjny: arkusze {', '.join(a.nazwa for a in o)}")
+                if pdf_orient:
+                    z.postep.emit(0, 0, "Plan orientacyjny: PDF…")
+                    p.zapisz_orientacje_pdf(pdf_orient, z.log.emit)
+                    z.log.emit(f"Zapisano: {pdf_orient}")
             zadania.append(("orientacja.dxf", orient))
 
-        zapisane, bledy = [], []
-        QApplication.setOverrideCursor(Qt.WaitCursor)
-        try:
-            for przyrostek, f in zadania:
+        def praca(z):
+            zapisane, bledy = [], []
+            for nr, (przyrostek, f) in enumerate(zadania, start=1):
                 cel = p.sciezka(kat, przyrostek)
+                z.postep.emit(nr - 1, len(zadania), f"Zapis {cel.name} ({nr}/{len(zadania)})…")
                 try:
-                    f(cel)
+                    f(cel, z)
                     zapisane.append(cel)
-                    self.log(f"Zapisano: {cel}")
+                    z.log.emit(f"Zapisano: {cel}")
                 except PermissionError:
                     bledy.append(f"{cel.name}: plik jest otwarty w innym programie.")
                 except Exception as e:  # noqa: BLE001
                     bledy.append(f"{cel.name}: {e}")
-                    self.log(traceback.format_exc())
-        finally:
-            QApplication.restoreOverrideCursor()
-        msg = "Zapisano:\n" + "\n".join(f"• {z.name}" for z in zapisane)
-        if bledy:
-            QMessageBox.warning(self, "Gotowe z błędami", msg + "\n\nBłędy:\n" + "\n".join(bledy))
-        else:
-            QMessageBox.information(self, "Gotowe", msg)
+                    z.log.emit(traceback.format_exc())
+            return zapisane, bledy
+
+        def gotowe(wynik):
+            zapisane, bledy = wynik
+            self.l_stan.setText(f"Zapisano plików: {len(zapisane)}"
+                                + (f", błędów: {len(bledy)}" if bledy else ""))
+            msg = "Zapisano:\n" + "\n".join(f"• {z.name}" for z in zapisane)
+            if bledy:
+                QMessageBox.warning(self, "Gotowe z błędami",
+                                    msg + "\n\nBłędy:\n" + "\n".join(bledy))
+            else:
+                QMessageBox.information(self, "Gotowe", msg)
+        self._uruchom(praca, gotowe)
 
 
 def _adres(w) -> str:
@@ -1431,7 +1604,12 @@ def main() -> int:
     app.setFont(QFont("Segoe UI", 9))
     okno = OknoGlowne()
     okno.show()
-    return app.exec()
+    kod = app.exec()
+    # okno usuwane jawnie przed aplikacją - przypadkowa kolejność sprzątania obiektów Qt
+    # przy wyjściu z Pythona potrafi przerwać program (Aborted)
+    import shiboken6
+    shiboken6.delete(okno)
+    return kod
 
 
 if __name__ == "__main__":

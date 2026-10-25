@@ -4,6 +4,7 @@ Kolejność pracy:
     p = Projekt(cfg)
     p.wczytaj("projekt.dxf")        # słupy, błędne kliki, strefy trafo, opisy słupów
     p.geokoduj(postep)              # miejscowość/ulica/gmina z GUGiK
+    p.zastosuj_stan()               # ręczne poprawki i wykluczenia z <projekt>.wt.json
     p.planuj()                      # grupy i numery (bez zapisu)
     p.przypisz_rejony(rejony, domyslny)
     p.zapisz_dxf(...), p.zapisz_pismo(...), p.zapisz_rozbudowana(...), p.zapisz_uproszczona(...)
@@ -22,7 +23,8 @@ from shapely.geometry import LineString, box
 from shapely.ops import unary_union
 
 from . import arkusze as ark
-from . import dxf_writer, export, geocoder, numbering, pismo, podklad, reader, slowniki, ulice
+from . import dxf_writer, export, geocoder, numbering, pismo, podklad, reader, slowniki, stan
+from . import ulice
 from .config import Config
 from .model import BlednyKlik, StacjaTrafo, Wierzcholek
 
@@ -49,10 +51,16 @@ class Projekt:
         self._orient_doc: Drawing | None = None
         self._orient_podklady: list = []
         self._orient_podklad_arkusza: dict = {}
+        # ręczne poprawki i ustawienia zapisywane w <projekt>.wt.json (patrz stan.py)
+        self.stan: dict = stan.pusty()
+        self.poprawek_zastosowanych = 0
+        self.poprawek_niedopasowanych: list[str] = []
+        self.blad_stanu: str | None = None
 
     # ------------------------------------------------------------ analiza
     def wczytaj(self, plik: str | Path) -> None:
         self.plik = Path(plik)
+        self.stan = stan.wczytaj(self.plik_stanu)
         self.tolerancja_analizy = self.cfg.tolerancja_slupa
         self.doc = reader.wczytaj_dxf(str(self.plik))
         self.slupy, self.bledne_kliki = reader.wczytaj_slupy(self.doc, self.cfg)
@@ -94,10 +102,81 @@ class Projekt:
         n = 0
         for w in (slupy if slupy is not None else self.niezgodne_ulice()):
             if w.ulica_droga:
-                w.ulica = w.ulica_droga
-                w.ulica_zgodna = True
+                self.ustaw_pole(w, "ulica", w.ulica_droga, zapisz=False)
                 n += 1
+        if n:
+            self.zapisz_stan()
         return n
+
+    # ------------------------------------------------------------ stan projektu (.wt.json)
+    @property
+    def plik_stanu(self) -> Path:
+        return stan.plik_stanu(self.plik)
+
+    def _wpis_stanu(self, w: Wierzcholek) -> dict:
+        return self.stan["slupy"].setdefault(stan.klucz(w.x, w.y), {})
+
+    def ustaw_pole(self, w: Wierzcholek, atr: str, wartosc, zapisz: bool = True) -> None:
+        """Ręczna poprawka pola słupa - ustawiana i zapamiętywana w pliku stanu."""
+        if atr not in stan.POLA_RECZNE:
+            raise ValueError(f"Pola '{atr}' nie można poprawiać ręcznie.")
+        setattr(w, atr, wartosc)
+        if atr == "ulica" and w.ulica_droga:
+            # zgodna, gdy równa drodze; inaczej uznajemy decyzję użytkownika (None = nie zgłaszaj)
+            w.ulica_zgodna = True if ulice.norm(w.ulica) == ulice.norm(w.ulica_droga) else None
+        elif atr == "nr_w_sieci":
+            reader.ustaw_id_slupow(self.slupy)
+        self._wpis_stanu(w)[atr] = wartosc
+        if zapisz:
+            self.zapisz_stan()
+
+    def zastosuj_stan(self) -> None:
+        """Nakłada zapamiętane poprawki i wykluczenia na słupy (po odczycie i geokodowaniu).
+        Poprawki słupów, których nie ma już w rysunku, zostają w pliku."""
+        dopasowane, self.poprawek_niedopasowanych = stan.dopasuj(self.stan["slupy"], self.slupy)
+        przeklucz = {}
+        for idx, (k, wpis) in dopasowane.items():
+            w = self.slupy[idx]
+            for atr in stan.POLA_RECZNE:
+                if atr in wpis:
+                    setattr(w, atr, wpis[atr])
+            if "ulica" in wpis and w.ulica_droga:
+                w.ulica_zgodna = (True if ulice.norm(w.ulica) == ulice.norm(w.ulica_droga)
+                                  else None)
+            w.wykluczony = bool(wpis.get("wykluczony"))
+            nowy = stan.klucz(w.x, w.y)
+            if nowy != k:  # słup lekko przesunięty w rysunku - zapamiętaj nowe położenie
+                przeklucz[k] = nowy
+        for k, nowy in przeklucz.items():
+            self.stan["slupy"][nowy] = self.stan["slupy"].pop(k)
+        reader.ustaw_id_slupow(self.slupy)
+        self.poprawek_zastosowanych = len(dopasowane)
+        if self.poprawek_niedopasowanych:
+            self.ostrzezenia.append(
+                f"{len(self.poprawek_niedopasowanych)} zapamiętanych poprawek "
+                f"({self.plik_stanu.name}) nie pasuje do żadnego słupa – rysunek się zmienił.")
+
+    def ustawienia_stanu(self) -> dict:
+        return dict(self.stan.get("ustawienia") or {})
+
+    def zapisz_ustawienia(self, ustawienia: dict) -> None:
+        self.stan["ustawienia"] = dict(ustawienia)
+        self.zapisz_stan()
+
+    def zapisz_stan(self) -> bool:
+        """Zapisuje plik stanu obok DXF. Błąd zapisu (np. folder tylko do odczytu) nie
+        przerywa pracy - komunikat jest w self.blad_stanu."""
+        if self.plik is None:
+            return False
+        # puste wpisy (np. słup włączony z powrotem) nie są zapisywane
+        self.stan["slupy"] = {k: v for k, v in self.stan["slupy"].items() if v}
+        try:
+            stan.zapisz(self.plik_stanu, self.stan)
+            self.blad_stanu = None
+            return True
+        except OSError as e:
+            self.blad_stanu = f"Nie można zapisać {self.plik_stanu.name}: {e}"
+            return False
 
     def przelicz_wgs84(self) -> None:
         """Współrzędne słupów w WGS 84 (EPSG:4326)."""
@@ -125,6 +204,12 @@ class Projekt:
         do planu, czyli znika z numeracji DXF, pisma i zestawień.
         Po zmianie trzeba wywołać planuj()."""
         slup.wykluczony = wykluczony
+        wpis = self._wpis_stanu(slup)
+        if wykluczony:
+            wpis["wykluczony"] = True
+        else:
+            wpis.pop("wykluczony", None)
+        self.zapisz_stan()
 
     def przypisz_rejony(self, rejony: list[dict], domyslny: dict | None) -> list[str]:
         """Rejon wg gminy ze słownika; gminy nieprzypisane -> rejon domyślny.

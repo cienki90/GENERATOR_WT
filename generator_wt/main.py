@@ -77,6 +77,11 @@ def main(argv=None) -> int:
             p.sprawdz_ulice()
         except RuntimeError as e:
             print("  Sprawdzanie ulic pominięte:", e)
+    p.zastosuj_stan()
+    if p.poprawek_zastosowanych:
+        print(f"  Ręczne poprawki z {p.plik_stanu.name}: {p.poprawek_zastosowanych} słupów")
+    if p.poprawek_niedopasowanych:
+        print("  UWAGA:", p.ostrzezenia[-1])
     p.planuj()
     if p.ulice_sprawdzone:
         nz = p.niezgodne_ulice()

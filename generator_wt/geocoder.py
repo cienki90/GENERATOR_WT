@@ -9,6 +9,7 @@ przy kolejnych uruchomieniach dla tego samego projektu.
 from __future__ import annotations
 
 import json
+import os
 import threading
 from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
@@ -97,14 +98,18 @@ class Geokoder:
         return wynik
 
     def zapisz_cache(self):
+        with self._lock:  # inne wątki mogą w tym czasie dopisywać wyniki
+            tekst = json.dumps(self.cache, ensure_ascii=False, indent=1)
         self.plik_cache.parent.mkdir(parents=True, exist_ok=True)
-        self.plik_cache.write_text(json.dumps(self.cache, ensure_ascii=False, indent=1),
-                                   encoding="utf-8")
+        tmp = self.plik_cache.with_name(self.plik_cache.name + ".tmp")
+        tmp.write_text(tekst, encoding="utf-8")
+        os.replace(tmp, self.plik_cache)  # przerwany zapis nie psuje poprzedniego pliku
 
 
 def uzupelnij(wierzcholki: list[Wierzcholek], geokoder: Geokoder, watki: int = 8,
-              postep=None) -> int:
-    """Uzupełnia dane adresowe wierzchołków. Zwraca liczbę błędów."""
+              postep=None, zapis_co: int = 50) -> int:
+    """Uzupełnia dane adresowe wierzchołków. Zwraca liczbę błędów.
+    Cache jest zapisywany co 'zapis_co' słupów - przerwane pobieranie nie przepada."""
     bledy = 0
     gotowe = 0
 
@@ -113,6 +118,8 @@ def uzupelnij(wierzcholki: list[Wierzcholek], geokoder: Geokoder, watki: int = 8
 
     with ThreadPoolExecutor(max_workers=watki) as pula:
         for w, d in pula.map(praca, wierzcholki):
+            if zapis_co and gotowe and gotowe % zapis_co == 0:
+                geokoder.zapisz_cache()
             w.miejscowosc = d.get("miejscowosc") or None
             w.ulica = d.get("ulica") or None
             w.kod = d.get("kod") or None

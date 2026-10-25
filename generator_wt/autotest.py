@@ -43,12 +43,16 @@ def uruchom() -> int:
             linie.append("pliki: " + ", ".join(sorted(f.name for f in k.iterdir())))
         linie.append(f"WGS 84 słupa 1: {p.plan[0].lat:.6f}, {p.plan[0].lon:.6f}")
 
+        import shiboken6
         from PySide6.QtWidgets import QApplication
 
         from .gui import OknoGlowne
         app = QApplication.instance() or QApplication(sys.argv)
         okno = OknoGlowne()
         okno.close()
+        # jawne usunięcie okna przed aplikacją - inaczej sprzątanie przy wyjściu
+        # bywa przerywane (Aborted) i autotest kończy się kodem błędu mimo wyniku OK
+        shiboken6.delete(okno)
         del app
         linie.append("okno: OK")
         linie.append("WYNIK: OK")

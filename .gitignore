@@ -18,3 +18,8 @@ dist/
 *_tabela_projektowa.xlsx
 dane/cache_drog/
 autotest.log
+*_numeracja.pdf
+*_orientacja.pdf
+*.wt.json
+*.wt.json.tmp
+dane/cache_geokodowania.json.tmp

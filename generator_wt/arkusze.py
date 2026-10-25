@@ -157,6 +157,20 @@ def _probkuj(linie, gestosc):
     return np.array(P), np.array(ch), np.array(T)
 
 
+def _unikalne_wiersze(M: np.ndarray) -> np.ndarray:
+    """Indeksy pierwszych wystąpień unikalnych wierszy macierzy logicznej, w porządku
+    leksykograficznym wierszy - jak np.unique(M, axis=0, return_index=True), ale
+    wielokrotnie szybciej (wiersze pakowane do bajtów i porównywane jako klucze)."""
+    if not len(M):
+        return np.zeros(0, int)
+    spak = np.packbits(M.astype(bool), axis=1)
+    pierwsze: dict[bytes, int] = {}
+    for i, k in enumerate(map(bytes, spak)):
+        pierwsze.setdefault(k, i)
+    # bitorder 'big': kolejność bajtów = kolejność leksykograficzna wierszy 0/1
+    return np.array([pierwsze[k] for k in sorted(pierwsze)], int)
+
+
 def _wybierz_ilp(M: np.ndarray, log=None) -> list[int] | None:
     """Minimalna liczba arkuszy (pokrycie zbioru), a wśród takich rozwiązań -
     najmniejsze dublowanie (suma pokrytych punktów). Wymaga scipy (HiGHS)."""
@@ -170,7 +184,8 @@ def _wybierz_ilp(M: np.ndarray, log=None) -> list[int] | None:
     pelne = np.nonzero(M.all(axis=1))[0]
     if len(pelne):
         return [int(pelne[np.argmin(koszt[pelne])])]
-    A = np.unique(M.T.astype(np.int8), axis=0)
+    MT = np.ascontiguousarray(M.T)
+    A = MT[_unikalne_wiersze(MT)].astype(np.int8)
     n = M.shape[0]
     pokrycie = LinearConstraint(csr_matrix(A), lb=1, ub=np.inf)
     r1 = milp(c=np.ones(n), constraints=[pokrycie], integrality=np.ones(n),
@@ -297,8 +312,7 @@ def _rozmiesc_skupisko(linie: list[LineString], W: float, H: float, zakazane,
         brak &= ~r
 
     # kandydaci o identycznym pokryciu są równoważni - zostaw po jednym (mniejszy problem)
-    _, jedn = np.unique(M, axis=0, return_index=True)
-    jedn.sort()
+    jedn = np.sort(_unikalne_wiersze(M))
     XY = [XY[j] for j in jedn]
     M = M[jedn]
 
