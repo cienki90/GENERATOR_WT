@@ -68,8 +68,8 @@ def ladna_nazwa(nazwa: str) -> str:
             slowa.append(s.lower())
         else:
             slowa.append("-".join(x[:1].upper() + x[1:].lower() for x in s.split("-")))
-    if t.isupper() and len(t.split()) == 1:
-        slowa = [t[:1] + t[1:].lower()]
+    if t.isupper() and len(t.split()) == 1:  # jedno słowo, np. "KOWALSKI-NOWAK"
+        slowa = ["-".join(x[:1].upper() + x[1:].lower() for x in t.split("-"))]
     return (" ".join(slowa) + (" " + forma if forma else "")).strip()
 
 

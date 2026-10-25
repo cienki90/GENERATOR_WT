@@ -6,7 +6,7 @@ Program okienkowy, który numeruje słupy (wierzchołki polilinii warstwy `!tele
 
 ## Instalacja (Windows)
 
-1. Zainstaluj Pythona 3.11 lub nowszego z python.org. Przy instalacji zaznacz „Add Python to PATH”.
+1. Zainstaluj Pythona 3.12 lub nowszego z python.org. Przy instalacji zaznacz „Add Python to PATH”.
 2. Uruchom `instaluj.bat`.
 3. Program uruchamiasz plikiem `Generator WT.bat` albo dwuklikiem w `uruchom.pyw`.
 
@@ -64,6 +64,19 @@ W zakładce „Kontrola projektu” są wymienione przęsła dłuższe niż 55 m
   - `Rejony`: `Nazwa` (do pisma), `Nazwa skrócona` (do Excela), `Gminy` (rozdzielone `;`).
 - `przyklady/` zawiera przykładowy projekt i wzór numeracji.
 - `generator_wt/config.py` przechowuje ustawienia: warstwy, wygląd numeracji, tolerancje.
+
+### Plik stanu projektu (`*.wt.json`)
+
+Obok pliku DXF program zapisuje `<projekt>.wt.json`: ręczne poprawki z wykazu (ulica, miejscowość, gmina, rodzaj, typ, nr w sieci, uwagi), słupy wyłączone z numeracji i ustawienia projektu (prefiks, numer startowy, zakładka, operator, rejon, daty umowy). Przy każdej analizie są nakładane na nowo, więc nie przepadają po ponownym otwarciu. Słupy są rozpoznawane po położeniu (do 0,5 m). Usunięcie pliku przywraca dane z rysunku i usług.
+
+## Testy i wersje bibliotek
+
+Wersje bibliotek są przypięte: `requirements.txt` (biblioteki programu), `requirements-dev.txt` (pytest, PyInstaller) i `constraints.txt` (pełny zestaw z zależnościami pośrednimi, sprawdzony z Pythonem 3.12 i 3.14). Testy uruchamiasz poleceniem:
+
+    python -m pip install -r requirements.txt -r requirements-dev.txt -c constraints.txt
+    python -m pytest
+
+Testy nie potrzebują internetu (usługi GUGiK i OSM są zastępowane danymi testowymi). Numeracja i ułożenie arkuszy przykładowego projektu są porównywane ze wzorcem `tests/dane/wzorzec.json`. Gdy zmiana algorytmu ma zmienić wynik, odśwież wzorzec poleceniem `python -m tests.wzorzec` i zatwierdź go razem ze zmianą. Na GitHubie testy uruchamiają się przy każdym wypchnięciu zmian (Actions → „Testy”), a budowa `.exe` przerywa się, gdy nie przejdą.
 
 Wiersz poleceń (do automatyzacji): `python -m generator_wt.main projekt.dxf --tak`. Flaga `--pdf` dodaje PDF arkuszy numeracji (i planu orientacyjnego, gdy użyto `--orientacja`).
 

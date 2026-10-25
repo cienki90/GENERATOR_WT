@@ -1,7 +1,13 @@
 @echo off
 rem Buduje samodzielny program dist\Generator WT\Generator WT.exe (bez instalacji Pythona)
 cd /d "%~dp0"
-python -m pip install -r requirements.txt pyinstaller
+python -m pip install -r requirements.txt -r requirements-dev.txt -c constraints.txt
+python -m pytest -q
+if errorlevel 1 (
+  echo Testy nie przeszly - program nie zostal zbudowany.
+  pause
+  exit /b 1
+)
 pyinstaller --noconfirm --windowed --name "Generator WT" --collect-all pyproj --collect-all pymupdf --collect-data docx --collect-data ezdxf --collect-submodules scipy.optimize --exclude-module matplotlib --exclude-module tkinter uruchom.pyw
 xcopy /E /I /Y szablony "dist\Generator WT\szablony"
 mkdir "dist\Generator WT\dane" 2>nul
