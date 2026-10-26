@@ -102,9 +102,13 @@ class Zadanie(QObject):
 
     def run(self):
         try:
-            self.gotowe.emit(self.praca(self))
+            wynik = ("gotowe", self.praca(self))
         except Exception as e:  # noqa: BLE001 - komunikat dla użytkownika
-            self.blad.emit(f"{e}\n\n{traceback.format_exc()}")
+            wynik = ("blad", f"{e}\n\n{traceback.format_exc()}")
+        # przed końcem wątku oddaj obiekt wątkowi okna - inaczej Python usuwa go potem
+        # z innego wątku niż jego własny, co bywa przyczyną losowego przerwania programu
+        self.moveToThread(QApplication.instance().thread())
+        getattr(self, wynik[0]).emit(wynik[1])
 
 
 class PodgladArkuszy(QWidget):
@@ -1210,9 +1214,11 @@ class OknoGlowne(QMainWindow):
                     dane = img.tobytes("raw", "RGB")
                     qimg = QImage(dane, img.width, img.height, img.width * 3,
                                   QImage.Format_RGB888).copy()
-                    self.gotowe.emit(qimg, bbox)
+                    wynik = (self.gotowe, (qimg, bbox))
                 except Exception as e:  # noqa: BLE001
-                    self.blad.emit(str(e))
+                    wynik = (self.blad, (str(e),))
+                self.moveToThread(QApplication.instance().thread())  # jak w Zadanie.run
+                wynik[0].emit(*wynik[1])
 
         self._watek_podkladu = QThread(self)
         self._pob = _Pobieracz()

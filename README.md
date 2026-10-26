@@ -12,6 +12,14 @@ Program okienkowy, który numeruje słupy (wierzchołki polilinii warstwy `!tele
 
 Wersję `.exe` buduje się ręcznie: GitHub → Actions → „Wersja Windows (.exe)” → Run workflow. Lokalnie `buduj_exe.bat` tworzy samodzielny `dist\Generator WT\Generator WT.exe`. Na komputerze, na którym potem uruchamiasz ten plik, nie trzeba instalować Pythona.
 
+## Okno programu
+
+Okno ma interfejs webowy wyświetlany przez Qt WebEngine. Lewy panel zawiera kroki pracy (projekt, zlecenie, numeracja, wyniki), środek mapę OpenLayers w układzie PL-2000 projektu z wykazem słupów, prawy panel „Do sprawdzenia”. Kliknięcie pozycji w „Do sprawdzenia” przybliża mapę do słupa lub przęsła. Na mapie możesz przełączać podkład (OpenStreetMap, ortofotomapa, mapa topograficzna GUGiK) i nakładki (działki i budynki EGiB, sieci GESUT, strefy trafo, arkusze, numery). Jest jasny i ciemny motyw (przycisk ◐).
+
+- `uruchom.pyw --qt` uruchamia poprzednie okno (Qt Widgets). Program przechodzi na nie sam, gdy Qt WebEngine nie jest dostępne.
+- `python -m generator_wt.web --przegladarka` uruchamia sam serwer i wypisuje adres do otwarcia w przeglądarce (do testów; zamiast okien wyboru pliku wpisujesz ścieżki).
+- Kod interfejsu: `generator_wt/web/` (`api.py` – operacje i dane, `serwer.py` – lokalny serwer pod 127.0.0.1 z tokenem, `okno.py` – okno Qt, `static/` – HTML/CSS/JS, `static/vendor/` – OpenLayers 10.6.1 i proj4 2.15.0 z licencjami).
+
 ## Praca z programem
 
 1. **Plik projektowy:** wybierz plik DXF. Analiza uruchamia się sama. Program wtedy:

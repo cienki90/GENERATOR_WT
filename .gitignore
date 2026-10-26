@@ -23,3 +23,5 @@ autotest.log
 *.wt.json
 *.wt.json.tmp
 dane/cache_geokodowania.json.tmp
+dane/ustawienia_okna.json
+dane/ustawienia_okna.json.tmp

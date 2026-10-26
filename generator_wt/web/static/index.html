@@ -1,0 +1,166 @@
+<!doctype html>
+<html lang="pl">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Generator WT</title>
+<link rel="stylesheet" href="vendor/ol.css">
+<link rel="stylesheet" href="styl.css">
+</head>
+<body>
+<header class="gora">
+  <div class="logo"><span class="znak" aria-hidden="true"></span>Generator WT</div>
+  <div class="plik" id="nazwa-pliku">Nie wczytano projektu</div>
+  <nav class="kroki" aria-label="Kroki pracy">
+    <button data-krok="projekt" class="krok"><span>1</span>Projekt</button>
+    <button data-krok="kontrola" class="krok"><span>2</span>Kontrola</button>
+    <button data-krok="zlecenie" class="krok"><span>3</span>Zlecenie</button>
+    <button data-krok="wyniki" class="krok"><span>4</span>Generuj</button>
+  </nav>
+  <button class="ikona" id="motyw" title="Jasny / ciemny motyw" aria-label="Zmień motyw">◐</button>
+</header>
+
+<main class="uklad">
+  <aside class="lewy" id="lewy">
+    <section class="karta" id="s-projekt">
+      <h2>1. Projekt</h2>
+      <label class="pole">Plik DXF
+        <div class="rzad">
+          <input id="plik" type="text" placeholder="C:\projekty\trasa.dxf" spellcheck="false">
+          <button id="wybierz-plik">Wybierz…</button>
+        </div>
+      </label>
+      <label class="check"><input type="checkbox" id="geo" checked> Pobieraj adresy z GUGiK i sprawdzaj ulice</label>
+      <button class="glowny" id="analizuj">Analizuj projekt</button>
+      <div class="podsumowanie" id="podsumowanie"></div>
+    </section>
+
+    <section class="karta" id="s-zlecenie">
+      <h2>2. Zlecenie</h2>
+      <label class="pole">Operator
+        <div class="rzad"><select id="operator"></select><button id="dodaj-operatora" title="Dodaj operatora po NIP">+ NIP</button></div>
+      </label>
+      <label class="pole">Rejon domyślny (dla gmin spoza listy)<select id="rejon"></select></label>
+      <div class="dwa">
+        <label class="pole">Umowa od<input id="umowa-od" type="date"></label>
+        <label class="pole">Umowa do<input id="umowa-do" type="text" value="-"></label>
+      </div>
+      <div class="dwa">
+        <label class="pole">Opracował<input id="opracowal" type="text" placeholder="Jan Kowalski"></label>
+        <label class="pole">Data rysunku<input id="data-rysunku" type="text"></label>
+      </div>
+      <div class="rzad przyciski"><button id="edytuj-listy">Edytuj listy</button><button id="odswiez-listy">Odśwież listy</button></div>
+    </section>
+
+    <section class="karta" id="s-numeracja">
+      <h2>3. Numeracja i arkusze</h2>
+      <div class="dwa">
+        <label class="pole">Prefiks<input id="prefiks" type="text" placeholder="S"></label>
+        <label class="pole">Numer startowy<input id="numer-startowy" type="number" min="0" max="99999" value="1"></label>
+      </div>
+      <div class="dwa">
+        <label class="pole">Scalanie wierzchołków [m]<input id="tolerancja" type="number" min="0.01" max="50" step="0.5" value="5"></label>
+        <label class="pole">Zakładka arkuszy [m]<input id="zakladka" type="number" min="0" max="200" value="10"></label>
+      </div>
+      <p class="uwaga ukryte" id="uwaga-tolerancja">Zmiana scalania wymaga ponownej analizy.</p>
+      <label class="check"><input type="checkbox" id="kierunek" checked> Odnośnik po stronie z dala od linii</label>
+    </section>
+
+    <section class="karta" id="s-wyniki">
+      <h2>4. Wyniki</h2>
+      <label class="check"><input type="checkbox" data-wynik="dxf" checked> Numeracja w DXF</label>
+      <label class="check wciecie"><input type="checkbox" data-wynik="arkusze" checked> arkusze 1:1000</label>
+      <label class="check wciecie2"><input type="checkbox" data-wynik="pdf_numeracji" checked> arkusze jako PDF</label>
+      <label class="check"><input type="checkbox" data-wynik="pismo" checked> Pismo – zapytanie o dostęp</label>
+      <label class="check"><input type="checkbox" data-wynik="rozbudowana" checked> Zestawienie rozbudowane</label>
+      <label class="check"><input type="checkbox" data-wynik="uproszczona" checked> Zestawienie uproszczone</label>
+      <label class="check"><input type="checkbox" data-wynik="projektowa" checked> Tabela projektowa</label>
+      <label class="check"><input type="checkbox" data-wynik="orientacja" checked> Plan orientacyjny</label>
+      <div class="wciecie" id="orientacja-opcje">
+        <div class="dwa">
+          <label class="pole">Skala<select id="or-skala"><option value="10000">1:10 000</option><option value="25000">1:25 000</option></select></label>
+          <label class="pole">Podkład<select id="or-zrodlo"><option value="osm">OpenStreetMap</option><option value="gugik">Topograficzna GUGiK</option></select></label>
+        </div>
+        <label class="check"><input type="checkbox" id="or-szarosc"> w odcieniach szarości</label>
+        <label class="check"><input type="checkbox" id="or-trasa" checked> trasa na planie</label>
+        <label class="check"><input type="checkbox" id="or-pdf" checked> także PDF</label>
+      </div>
+      <label class="pole">Folder wyników
+        <div class="rzad"><input id="katalog" type="text" placeholder="folder projektu" spellcheck="false"><button id="wybierz-katalog">…</button></div>
+      </label>
+    </section>
+    <div class="akcje">
+      <button class="glowny duzy" id="generuj">Numeruj i generuj dokumenty</button>
+      <button id="otworz-folder">Otwórz folder wyników</button>
+    </div>
+  </aside>
+
+  <section class="srodek">
+    <div class="mapa-ramka">
+      <div id="mapa" class="mapa"></div>
+      <div class="pusta-mapa" id="pusta-mapa">
+        <p class="duzy-tekst">Wybierz plik DXF projektu</p>
+        <p>Po analizie zobaczysz tu trasę, słupy z numeracją i arkusze.</p>
+      </div>
+      <div class="narzedzia-mapy">
+        <input id="szukaj" type="search" placeholder="Szukaj słupa: nr lub 05-0743/9.1">
+        <button id="dopasuj" title="Pokaż całą trasę">Cała trasa</button>
+        <div class="rozwijane">
+          <button id="warstwy-przycisk" aria-expanded="false">Warstwy ▾</button>
+          <div class="menu ukryte" id="warstwy-menu">
+            <div class="menu-tytul">Podkład</div>
+            <label><input type="radio" name="tlo" value="brak"> Bez podkładu</label>
+            <label><input type="radio" name="tlo" value="osm" checked> OpenStreetMap</label>
+            <label><input type="radio" name="tlo" value="orto"> Ortofotomapa</label>
+            <label><input type="radio" name="tlo" value="topo"> Mapa topograficzna</label>
+            <div class="menu-tytul">Nakładki</div>
+            <label><input type="checkbox" data-warstwa="egib"> Działki i budynki (EGiB)</label>
+            <label><input type="checkbox" data-warstwa="gesut"> Sieci uzbrojenia (GESUT)</label>
+            <label><input type="checkbox" data-warstwa="strefy" checked> Strefy stacji trafo</label>
+            <label><input type="checkbox" data-warstwa="arkusze" checked> Arkusze 1:1000</label>
+            <label><input type="checkbox" data-warstwa="etykiety" checked> Numery słupów</label>
+          </div>
+        </div>
+      </div>
+      <div class="ladowanie ukryte" id="ladowanie" role="status"></div>
+      <div class="karta-slupa ukryte" id="karta-slupa"></div>
+      <div class="podpowiedz">Klik – zaznacz · podwójny klik – wyłącz/włącz słup · kółko – zoom</div>
+    </div>
+
+    <div class="dolny" id="dolny">
+      <div class="zakladki" role="tablist">
+        <button class="zakladka aktywna" data-zakladka="wykaz" role="tab">Wykaz słupów</button>
+        <button class="zakladka" data-zakladka="arkusze" role="tab">Arkusze</button>
+        <button class="zakladka" data-zakladka="dziennik" role="tab">Dziennik</button>
+        <input id="filtr" type="search" placeholder="Filtruj wykaz">
+        <button class="ikona" id="zwin" title="Zwiń / rozwiń panel" aria-label="Zwiń panel">▾</button>
+      </div>
+      <div class="tresc" data-tresc="wykaz"><div class="tabela-ramka"><table id="wykaz"></table></div></div>
+      <div class="tresc ukryte" data-tresc="arkusze"><div id="lista-arkuszy" class="lista"></div></div>
+      <div class="tresc ukryte" data-tresc="dziennik"><pre id="dziennik"></pre></div>
+    </div>
+  </section>
+
+  <aside class="prawy" id="prawy">
+    <div class="naglowek-panelu">
+      <h2>Do sprawdzenia</h2>
+      <span class="licznik" id="licznik-problemow"></span>
+    </div>
+    <div class="metryki" id="metryki"></div>
+    <button id="przyjmij-ulice" class="ukryte">Przyjmij ulice z dróg</button>
+    <div id="kontrola" class="kontrola"><p class="wyszarzone">Brak projektu.</p></div>
+  </aside>
+</main>
+
+<footer class="status">
+  <div class="postep ukryte" id="postep"><div class="pasek" id="pasek"></div></div>
+  <span id="status">Gotowy</span>
+</footer>
+
+<div class="tlo-okna ukryte" id="okno"><div class="okno" role="dialog" aria-modal="true" id="okno-tresc"></div></div>
+
+<script src="vendor/ol.js"></script>
+<script src="vendor/proj4.js"></script>
+<script src="app.js"></script>
+</body>
+</html>

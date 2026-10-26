@@ -15,19 +15,28 @@ def app():
     return QApplication.instance() or QApplication([])
 
 
-@pytest.fixture
-def komunikaty(monkeypatch):
+@pytest.fixture(scope="module")
+def _komunikaty():
     """Okna dialogowe nie blokują testu: pytania = Tak, komunikaty są zapisywane."""
     lista = []
-    monkeypatch.setattr(QMessageBox, "question", staticmethod(lambda *a, **k: QMessageBox.Yes))
-    for rodzaj in ("information", "warning", "critical"):
-        monkeypatch.setattr(QMessageBox, rodzaj, staticmethod(
-            lambda s, t, m, *a, r=rodzaj: lista.append((r, t, m))))
-    return lista
+    with pytest.MonkeyPatch.context() as mp:
+        mp.setattr(QMessageBox, "question", staticmethod(lambda *a, **k: QMessageBox.Yes))
+        for rodzaj in ("information", "warning", "critical"):
+            mp.setattr(QMessageBox, rodzaj, staticmethod(
+                lambda s, t, m, *a, r=rodzaj: lista.append((r, t, m))))
+        yield lista
 
 
 @pytest.fixture
-def okno(app, komunikaty):
+def komunikaty(_komunikaty):
+    _komunikaty.clear()
+    return _komunikaty
+
+
+@pytest.fixture(scope="module")
+def _okno(app, _komunikaty):
+    """Jedno okno na cały plik - jak w programie. Wielokrotne tworzenie i niszczenie
+    głównego okna w jednym procesie losowo przerywało testy wewnątrz Qt."""
     import shiboken6
 
     from generator_wt.gui import OknoGlowne
@@ -36,6 +45,15 @@ def okno(app, komunikaty):
     czekaj(app, o)
     o.close()
     shiboken6.delete(o)
+    app.processEvents()
+
+
+@pytest.fixture
+def okno(app, _okno, komunikaty):
+    yield _okno
+    _okno._zwloka_arkuszy.stop()  # odłożone przeliczenie arkuszy nie przechodzi do kolejnego testu
+    czekaj(app, _okno)
+    _okno.hide()
 
 
 def czekaj(app, o, limit=180):
@@ -105,16 +123,15 @@ def test_arkusze_w_tle_i_ustawienia(app, okno, dxf):
     assert okno.zajety()
     czekaj(app, okno)
     assert len(okno.projekt.arkusze) == 20
-    # nowe okno wczytuje zakładkę zapamiętaną dla projektu
-    from generator_wt.gui import OknoGlowne
-    import shiboken6
-    o2 = OknoGlowne()
-    try:
-        o2._wczytaj_ustawienia_projektu(str(dxf))
-        assert o2.s_zakladka.value() == 25
-    finally:
-        o2.close()
-        shiboken6.delete(o2)
+    # przy ponownym otwarciu projektu zakładka wraca z pliku stanu projektu
+    okno.s_zakladka.blockSignals(True)
+    okno.s_zakladka.setValue(10)
+    okno.s_zakladka.blockSignals(False)
+    okno._wczytaj_ustawienia_projektu(str(dxf))
+    assert okno.s_zakladka.value() == 25
+    okno.s_zakladka.blockSignals(True)
+    okno.s_zakladka.setValue(10)  # kolejne testy zaczynają od domyślnej zakładki
+    okno.s_zakladka.blockSignals(False)
 
 
 def test_generowanie_w_tle(app, okno, dxf, komunikaty):

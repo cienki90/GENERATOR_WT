@@ -43,6 +43,29 @@ def uruchom() -> int:
             linie.append("pliki: " + ", ".join(sorted(f.name for f in k.iterdir())))
         linie.append(f"WGS 84 słupa 1: {p.plan[0].lat:.6f}, {p.plan[0].lon:.6f}")
 
+        # okno webowe: pliki interfejsu w paczce, serwer i API, moduł Qt WebEngine
+        import json
+        import urllib.request
+
+        from .web.api import Api
+        from .web.serwer import Serwer
+        with tempfile.TemporaryDirectory() as tmp:
+            s = Serwer(Api(plik_ustawien=Path(tmp) / "u.json")).start()
+            try:
+                for plik in ("", "app.js", "vendor/ol.js", "vendor/proj4.js"):
+                    with urllib.request.urlopen(f"http://127.0.0.1:{s.port}/{plik}",
+                                                timeout=30) as r:
+                        assert r.status == 200, plik
+                zad = urllib.request.Request(
+                    f"http://127.0.0.1:{s.port}/api/start", method="POST", data=b"{}",
+                    headers={"X-Token": s.token, "Content-Type": "application/json"})
+                with urllib.request.urlopen(zad, timeout=30) as r:
+                    assert json.loads(r.read())["ok"]
+            finally:
+                s.stop()
+        from .web import okno  # noqa: F401 - Qt WebEngine dołączony do paczki
+        linie.append("okno webowe: OK")
+
         import shiboken6
         from PySide6.QtWidgets import QApplication
 
