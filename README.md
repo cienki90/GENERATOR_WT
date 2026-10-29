@@ -9,8 +9,15 @@ Program okienkowy, który numeruje słupy (wierzchołki polilinii warstwy `!tele
 1. Zainstaluj Pythona 3.12 lub nowszego z python.org. Przy instalacji zaznacz „Add Python to PATH”.
 2. Uruchom `instaluj.bat`.
 3. Program uruchamiasz plikiem `Generator WT.bat` albo dwuklikiem w `uruchom.pyw`.
+4. Do pracy z plikami DWG zainstaluj darmowy ODA File Converter (patrz niżej).
 
 Wersję `.exe` buduje się ręcznie: GitHub → Actions → „Wersja Windows (.exe)” → Run workflow. Lokalnie `buduj_exe.bat` tworzy samodzielny `dist\Generator WT\Generator WT.exe`. Na komputerze, na którym potem uruchamiasz ten plik, nie trzeba instalować Pythona.
+
+### Format DWG i DXF
+
+Domyślnym formatem rysunków jest DWG: program otwiera projekty DWG i DXF, a numerację i plan orientacyjny zapisuje jako DWG (wersja jak rysunek źródłowy). W „Wyniki” można przełączyć zapis na DXF.
+
+Do obsługi DWG potrzebny jest darmowy program **ODA File Converter** (https://www.opendesign.com/guestfiles/oda_file_converter). Każdy użytkownik instaluje go sam – licencja ODA nie pozwala dołączyć go do paczki programu. Program szuka go w `C:\Program Files\ODA\ODAFileConverter*`; gdy jest gdzie indziej, wskaż go przyciskiem „Wskaż program…”. Bez ODA program działa na plikach DXF i proponuje zapis wyników jako DXF.
 
 ## Okno programu
 
@@ -22,7 +29,7 @@ Okno ma interfejs webowy wyświetlany przez Qt WebEngine. Lewy panel zawiera kro
 
 ## Praca z programem
 
-1. **Plik projektowy:** wybierz plik DXF. Analiza uruchamia się sama. Program wtedy:
+1. **Plik projektowy:** wybierz rysunek DWG (domyślnie) albo DXF. Analiza uruchamia się sama. Program wtedy:
    - scala wierzchołki leżące bliżej niż 5 m w jeden słup (błędne kliknięcia),
    - wyznacza strefy trafo z polilinii na warstwie `!trafo` i na warstwach o nazwie zaczynającej się od `_trafo`. Niezamknięte polilinie są domykane. Nazwa strefy to numer stacji z opisu (multileader „STACJA TRAFO 05-0792”). Obrysy bez opisu stacji dołączane są do strefy, z którą się stykają,
    - odczytuje rodzaj i typ słupa z opisów „słup nN / P-10/ZN”,
@@ -40,7 +47,7 @@ Okno ma interfejs webowy wyświetlany przez Qt WebEngine. Lewy panel zawiera kro
 - Jest ciągła i biegnie wzdłuż trasy. Słupy jednej stacji trafo mają kolejne numery. Słupy poza strefami są grupowane według miejscowości.
 - Wygląd odpowiada plikowi `przyklady/numeracja_leader.dxf`: odnośnik (LEADER) z tekstem (MTEXT) o wysokości 3,0, styl GeodText, warstwa `makro-numeracja-punktow`.
 - Odnośnik jest kierowany na stronę z dala od linii.
-- Poprzednia numeracja na tej warstwie jest zastępowana. Wynik trafia do `*_numeracja.dxf`, a oryginał zostaje bez zmian.
+- Poprzednia numeracja na tej warstwie jest zastępowana. Wynik trafia do `*_numeracja.dwg` (albo `.dxf`, patrz „Format DWG i DXF”), a oryginał zostaje bez zmian.
 
 ### Kontrola przęseł
 
@@ -55,7 +62,7 @@ W zakładce „Kontrola projektu” są wymienione przęsła dłuższe niż 55 m
 - Obrysy arkuszy z numerami są w modelu na niedrukowalnej warstwie `WT_arkusze`.
 - Opcjonalnie arkusze zapisywane są też jako wielostronicowy PDF (`*_numeracja.pdf`): jeden arkusz 1:1000 na stronie A3, rysunek wektorowy razem z tabelką i legendą.
 
-### Plan orientacyjny (`*_orientacja.dxf` + `*_orientacja.jpg`)
+### Plan orientacyjny (`*_orientacja.dwg` + `*_orientacja.jpg`)
 
 - Oddzielny plik z podkładem OSM. Zapasowo, albo jeśli to wybierzesz, używana jest mapa topograficzna GUGiK. Podkład może być w kolorze lub w odcieniach szarości.
 - Plan zawiera obrysy arkuszy z numerami, trasę (opcjonalnie) oraz arkusze A3 „0.A”, „0.B”… w skali 1:10 000 lub 1:25 000. Nazwa rysunku: „Plan orientacyjny - układ arkusza”.
@@ -86,7 +93,7 @@ Wersje bibliotek są przypięte: `requirements.txt` (biblioteki programu), `requ
 
 Testy nie potrzebują internetu (usługi GUGiK i OSM są zastępowane danymi testowymi). Numeracja i ułożenie arkuszy przykładowego projektu są porównywane ze wzorcem `tests/dane/wzorzec.json`. Gdy zmiana algorytmu ma zmienić wynik, odśwież wzorzec poleceniem `python -m tests.wzorzec` i zatwierdź go razem ze zmianą. Na GitHubie testy uruchamiają się przy każdym wypchnięciu zmian (Actions → „Testy”), a budowa `.exe` przerywa się, gdy nie przejdą.
 
-Wiersz poleceń (do automatyzacji): `python -m generator_wt.main projekt.dxf --tak`. Flaga `--pdf` dodaje PDF arkuszy numeracji (i planu orientacyjnego, gdy użyto `--orientacja`).
+Wiersz poleceń (do automatyzacji): `python -m generator_wt.main projekt.dwg --tak` (rysunki wynikowe w DWG; `--format dxf` zapisuje DXF, `--oda` wskazuje ODAFileConverter.exe). Flaga `--pdf` dodaje PDF arkuszy numeracji (i planu orientacyjnego, gdy użyto `--orientacja`).
 
 ## Plan
 

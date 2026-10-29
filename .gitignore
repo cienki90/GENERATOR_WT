@@ -25,3 +25,5 @@ autotest.log
 dane/cache_geokodowania.json.tmp
 dane/ustawienia_okna.json
 dane/ustawienia_okna.json.tmp
+*_numeracja.dwg
+*_orientacja.dwg

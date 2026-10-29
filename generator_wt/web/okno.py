@@ -16,6 +16,10 @@ from PySide6.QtWidgets import QApplication, QFileDialog, QMainWindow, QMessageBo
 from .api import Api
 from .serwer import Serwer
 
+# DWG jako domyślny format; DXF i oba naraz w kolejnych filtrach
+FILTR_RYSUNKOW = ("Rysunek DWG (*.dwg);;Rysunek DXF (*.dxf);;Rysunki DWG i DXF (*.dwg *.dxf);;"
+                  "Wszystkie pliki (*)")
+
 
 class Dialogi(QObject):
     """Natywne okna wyboru pliku i folderu, wywoływane z dowolnego wątku."""
@@ -40,7 +44,15 @@ class Dialogi(QObject):
     def wybierz_plik(self, start: str) -> str | None:
         def f():
             plik, _ = QFileDialog.getOpenFileName(self.rodzic, "Wybierz plik projektu", start,
-                                                  "Rysunek DXF (*.dxf);;Wszystkie pliki (*)")
+                                                  FILTR_RYSUNKOW)
+            return plik or None
+        return self._w_watku_okna(f)
+
+    def wybierz_program(self, start: str) -> str | None:
+        def f():
+            plik, _ = QFileDialog.getOpenFileName(self.rodzic, "Wskaż ODAFileConverter.exe", start,
+                                                  "ODA File Converter (ODAFileConverter.exe);;"
+                                                  "Programy (*.exe)")
             return plik or None
         return self._w_watku_okna(f)
 

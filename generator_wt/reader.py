@@ -4,17 +4,12 @@ from __future__ import annotations
 import math
 import re
 
-import ezdxf
 from ezdxf.document import Drawing
 from shapely.geometry import Point, Polygon
 from shapely.ops import unary_union
 
 from .config import Config
 from .model import BlednyKlik, StacjaTrafo, Wierzcholek
-
-
-def wczytaj_dxf(sciezka: str) -> Drawing:
-    return ezdxf.readfile(sciezka)
 
 
 def _warstwa(e, nazwa: str) -> bool:

@@ -25,9 +25,9 @@
   <aside class="lewy" id="lewy">
     <section class="karta" id="s-projekt">
       <h2>1. Projekt</h2>
-      <label class="pole">Plik DXF
+      <label class="pole">Rysunek projektu (DWG lub DXF)
         <div class="rzad">
-          <input id="plik" type="text" placeholder="C:\projekty\trasa.dxf" spellcheck="false">
+          <input id="plik" type="text" placeholder="C:\projekty\trasa.dwg" spellcheck="false">
           <button id="wybierz-plik">Wybierz…</button>
         </div>
       </label>
@@ -69,7 +69,11 @@
 
     <section class="karta" id="s-wyniki">
       <h2>4. Wyniki</h2>
-      <label class="check"><input type="checkbox" data-wynik="dxf" checked> Numeracja w DXF</label>
+      <label class="pole">Format rysunków (numeracja, plan orientacyjny)
+        <select id="format"><option value="dwg">DWG</option><option value="dxf">DXF</option></select>
+      </label>
+      <div class="oda" id="oda"></div>
+      <label class="check"><input type="checkbox" data-wynik="dxf" checked> Rysunek z numeracją</label>
       <label class="check wciecie"><input type="checkbox" data-wynik="arkusze" checked> arkusze 1:1000</label>
       <label class="check wciecie2"><input type="checkbox" data-wynik="pdf_numeracji" checked> arkusze jako PDF</label>
       <label class="check"><input type="checkbox" data-wynik="pismo" checked> Pismo – zapytanie o dostęp</label>
@@ -100,7 +104,7 @@
     <div class="mapa-ramka">
       <div id="mapa" class="mapa"></div>
       <div class="pusta-mapa" id="pusta-mapa">
-        <p class="duzy-tekst">Wybierz plik DXF projektu</p>
+        <p class="duzy-tekst">Wybierz rysunek projektu (DWG lub DXF)</p>
         <p>Po analizie zobaczysz tu trasę, słupy z numeracją i arkusze.</p>
       </div>
       <div class="narzedzia-mapy">

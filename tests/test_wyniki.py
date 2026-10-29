@@ -103,7 +103,7 @@ def test_tabela_projektowa_zawsze_wgs84(dxf):
 def test_wiersz_polecen(dxf, capsys):
     kat = dxf.parent / "wyniki"
     assert cli([str(dxf), "--bez-geokodowania", "--tak", "--katalog", str(kat),
-                "--prefiks", "S"]) == 0
+                "--prefiks", "S", "--format", "dxf"]) == 0
     pliki = sorted(f.name for f in kat.iterdir())
     assert pliki == ["projekt_numeracja.dxf", "projekt_pismo.docx", "projekt_rozbudowana.xlsx",
                      "projekt_tabela_projektowa.xlsx", "projekt_uproszczona.xls"]

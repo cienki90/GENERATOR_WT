@@ -185,6 +185,7 @@
         skala: parseInt($("#or-skala").value, 10), zrodlo: $("#or-zrodlo").value, szarosc: $("#or-szarosc").checked,
         trasa: $("#or-trasa").checked, pdf: $("#or-pdf").checked,
       },
+      format: $("#format").value,
       katalog: $("#katalog").value.trim(), operator: $("#operator").value, rejon: $("#rejon").value,
       opracowal: $("#opracowal").value.trim(), data_rysunku: $("#data-rysunku").value.trim(),
       umowa_od: dataPL($("#umowa-od").value), umowa_do: $("#umowa-do").value.trim() || "-",
@@ -205,7 +206,7 @@
     if (S.praca) return;
     const plik = $("#plik").value.trim().replace(/^"|"$/g, "");
     if (!plik) {
-      await komunikat("Wybierz projekt", "Wskaż plik DXF projektu (przycisk „Wybierz…” albo wpisz ścieżkę).");
+      await komunikat("Wybierz projekt", "Wskaż rysunek projektu DWG lub DXF (przycisk „Wybierz…” albo wpisz ścieżkę).");
       return;
     }
     $("#plik").value = plik;
@@ -220,7 +221,7 @@
   const wybierzPlik = bezpiecznie(async () => {
     if (S.praca) return;
     const r = await rpc("wybierz_plik", { start: $("#plik").value.trim() });
-    if (r.brak_dialogu) { $("#plik").focus(); status("Wpisz ścieżkę pliku DXF i naciśnij Enter."); return; }
+    if (r.brak_dialogu) { $("#plik").focus(); status("Wpisz ścieżkę rysunku DWG lub DXF i naciśnij Enter."); return; }
     if (r.plik) { $("#plik").value = r.plik; await analizuj(); }
   });
   async function zaladujDane(dopasuj) {
@@ -653,6 +654,7 @@
     if (s.istniejaca) tresc.push(el("p", { text: `Na warstwie ${s.warstwa} jest już ${s.istniejaca} numerów – zostaną zastąpione.` }));
     if (s.bledne_kliki) tresc.push(el("p", { text: `Scalono ${s.bledne_kliki} błędnych klików.` }));
     if (s.arkusze) tresc.push(el("p", { text: `Arkusze 1:1000: ${s.arkusze} (układy papieru 1–${s.arkusze}).` }));
+    if (s.rysunki) tresc.push(el("p", { text: `Rysunki zostaną zapisane jako ${s.format.toUpperCase()}.` }));
     tresc.push(el("p", {}, "Pliki zostaną zapisane w: ", el("b", { text: s.katalog })));
     let wgs = null;
     if (s.pytaj_o_uklad) {
@@ -666,10 +668,50 @@
                         { tekst: "Numeruj i zapisz", glowny: true, wartosc: () => ({ wgs84: !!(wgs && wgs.checked) }) }],
                 { szerokie: true });
   }
+  // ------------------------------------------------------------------ DWG (ODA File Converter)
+  function renderOda(oda) {
+    S.oda = oda;
+    const e = $("#oda");
+    e.classList.toggle("brak", !oda.dostepny);
+    if (oda.dostepny) {
+      e.replaceChildren(el("span", { text: "ODA File Converter: gotowy do pracy z DWG", title: oda.sciezka }));
+      return;
+    }
+    e.replaceChildren(
+      el("span", { text: "Odczyt i zapis DWG wymaga darmowego programu ODA File Converter. " +
+                         "Zainstaluj go albo wskaż, jeśli jest w nietypowym miejscu." }),
+      el("div", { class: "rzad" },
+         el("button", { text: "Strona ODA", onclick: bezpiecznie(() => rpc("otworz_strone_oda")) }),
+         el("button", { text: "Wskaż program…", onclick: wskazOda }),
+         el("button", { text: "Sprawdź ponownie", onclick: bezpiecznie(async () => renderOda((await rpc("start")).oda)) })));
+  }
+  const wskazOda = bezpiecznie(async () => {
+    let r = await rpc("wskaz_oda");
+    if (r.brak_dialogu) {  // w przeglądarce bez okien wyboru pliku - ścieżka wpisana ręcznie
+      const pole = el("input", { type: "text", placeholder: "C:\\Program Files\\ODA\\ODAFileConverter 26.4.0\\ODAFileConverter.exe" });
+      const sciezka = await okno([el("h3", { text: "Ścieżka do ODAFileConverter.exe" }), pole],
+                                 [{ tekst: "Anuluj", zwroc: null }, { tekst: "Zapisz", glowny: true, wartosc: () => pole.value.trim() }]);
+      if (!sciezka) return;
+      r = await rpc("wskaz_oda", { sciezka });
+    }
+    renderOda(r);
+  });
+
   const generuj = bezpiecznie(async () => {
     if (S.praca || !S.dane) return;
     const o = opcje();
-    const s = await rpc("podsumowanie_generowania", { opcje: o });
+    let s = await rpc("podsumowanie_generowania", { opcje: o });
+    if (s.brak_oda) {
+      const v = await okno([el("h3", { text: "Brak programu ODA File Converter" }),
+        el("p", { text: "Zapis rysunków w formacie DWG wymaga darmowego programu ODA File Converter. " +
+                        "Możesz zapisać rysunki tym razem jako DXF albo najpierw zainstalować program." })],
+        [{ tekst: "Anuluj", zwroc: null }, { tekst: "Strona ODA", zwroc: "strona" },
+         { tekst: "Zapisz jako DXF", glowny: true, zwroc: "dxf" }]);
+      if (v === "strona") await rpc("otworz_strone_oda");
+      if (v !== "dxf") { log("Przerwano – nic nie zapisano."); return; }
+      o.format = "dxf";
+      s = await rpc("podsumowanie_generowania", { opcje: o });
+    }
     if (s.ponowna_analiza) {
       await komunikat("Zmieniono scalanie wierzchołków", "Projekt zostanie przeanalizowany ponownie. Po analizie kliknij jeszcze raz „Numeruj i generuj”.");
       await analizuj();
@@ -772,6 +814,7 @@
     for (const id of ["#prefiks", "#numer-startowy", "#kierunek", "#rejon"]) $(id).addEventListener("change", przelicz);
     $("#operator").addEventListener("change", () => { renderKroki(); rpc("zapisz_ustawienia_okna", { ustawienia: { operator: $("#operator").value } }).catch(() => {}); });
     $("#zakladka").addEventListener("input", przeliczArkusze);
+    $("#format").addEventListener("change", () => rpc("zapisz_ustawienia_okna", { ustawienia: { format: $("#format").value } }).catch(() => {}));
     $("#tolerancja").addEventListener("input", sprawdzTolerancje);
     $$("[data-wynik]").forEach((c) => c.addEventListener("change", () => { zaleznosciWynikow(); pamiec.zapisz("wyniki", wyniki()); }));
     $("#przyjmij-ulice").addEventListener("click", async () => {
@@ -835,6 +878,8 @@
     $("#data-rysunku").value = st.miesiac;
     $("#tolerancja").value = st.domyslne.tolerancja_slupa;
     $("#zakladka").value = st.domyslne.zakladka;
+    $("#format").value = u.format === "dxf" ? "dxf" : "dwg";
+    renderOda(st.oda);
     const w = u.wyniki || pamiec.czytaj("wyniki", null);
     if (w) $$("[data-wynik]").forEach((c) => { if (c.dataset.wynik in w) c.checked = !!w[c.dataset.wynik]; });
     if (!S.dialogi) $("#wybierz-plik").title = "W przeglądarce wpisz ścieżkę pliku w polu obok";

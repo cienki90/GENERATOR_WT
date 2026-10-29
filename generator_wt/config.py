@@ -74,6 +74,11 @@ class Config:
     warstwa_trasy_orientacji: str = "WT_trasa"
     warstwa_podkladu: str = "WT_podklad"
 
+    # --- Format rysunków wynikowych (numeracja, plan orientacyjny): "dwg" albo "dxf" ---
+    # DWG wymaga programu ODA File Converter (patrz dwg.py); pusta ścieżka = szukaj sam
+    format_rysunkow: str = "dwg"
+    oda_sciezka: str = ""
+
     # --- Pliki ---
     szablon_pisma: Path = field(default_factory=lambda: KATALOG / "szablony" / "pismo_warunki.docx")
     szablon_rozbudowana: Path = field(default_factory=lambda: KATALOG / "szablony" / "rozbudowana.xlsx")

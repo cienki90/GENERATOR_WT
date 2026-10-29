@@ -10,7 +10,7 @@ import argparse
 import sys
 from pathlib import Path
 
-from . import slowniki
+from . import dwg, slowniki
 from .config import Config
 from .pismo import adres_slupa
 from .projekt import Projekt
@@ -26,8 +26,11 @@ def _znajdz(lista, nazwa):
 
 def main(argv=None) -> int:
     ap = argparse.ArgumentParser(description="Numeracja słupów warstwy !tele i zestawienia")
-    ap.add_argument("dxf")
+    ap.add_argument("dxf", metavar="rysunek", help="projekt DWG albo DXF")
     ap.add_argument("--katalog", help="folder wyników (domyślnie folder projektu)")
+    ap.add_argument("--format", choices=["dwg", "dxf"], default="dwg",
+                    help="format rysunków wynikowych (DWG wymaga ODA File Converter)")
+    ap.add_argument("--oda", help="ścieżka do ODAFileConverter.exe (domyślnie szukana sama)")
     ap.add_argument("--zestawienie", nargs="+", default=["wszystkie"],
                     choices=["rozbudowana", "uproszczona", "projektowa", "oba", "wszystkie",
                              "brak"],
@@ -58,8 +61,10 @@ def main(argv=None) -> int:
     a = ap.parse_args(argv)
 
     cfg = Config(prefiks=a.prefiks, numer_startowy=a.start, tolerancja_slupa=a.tolerancja,
-                 wgs84=a.wgs84)
+                 wgs84=a.wgs84, format_rysunkow=a.format, oda_sciezka=a.oda or "")
     p = Projekt(cfg)
+    if (a.format == "dwg" or dwg.jest_dwg(a.dxf)) and not p.oda_dostepny():
+        raise SystemExit(dwg.KOMUNIKAT_BRAK_ODA + " (albo użyj --format dxf z projektem DXF)")
     p.wczytaj(a.dxf)
     print(f"Słupów: {len(p.slupy)}, stref trafo: {len(p.stacje)}, "
           f"błędnych klików: {len(p.bledne_kliki)}")
@@ -121,8 +126,9 @@ def main(argv=None) -> int:
 
     kat = Path(a.katalog) if a.katalog else p.plik.parent
     kat.mkdir(parents=True, exist_ok=True)
-    zad = [("numeracja.dxf", lambda f: p.zapisz_dxf(f, not a.bez_arkuszy, operator,
-                                                    a.opracowal, a.data_rysunku)),
+    rys = p.format_rysunkow  # dwg / dxf
+    zad = [(f"numeracja.{rys}", lambda f: p.zapisz_dxf(f, not a.bez_arkuszy, operator,
+                                                       a.opracowal, a.data_rysunku)),
            ("pismo.docx", lambda f: p.zapisz_pismo(f, operator, a.od, a.do))]
     z = set(a.zestawienie)
     if z & {"rozbudowana", "oba", "wszystkie"}:
@@ -134,7 +140,7 @@ def main(argv=None) -> int:
     if a.pdf and not a.bez_arkuszy:
         zad.append(("numeracja.pdf", lambda f: p.zapisz_numeracje_pdf(f)))
     if a.orientacja:
-        zad.append(("orientacja.dxf", lambda f: p.zapisz_orientacje(
+        zad.append((f"orientacja.{rys}", lambda f: p.zapisz_orientacje(
             f, a.orientacja, a.szarosc, operator, a.opracowal, a.data_rysunku, a.podklad)))
         if a.pdf:
             zad.append(("orientacja.pdf", lambda f: p.zapisz_orientacje_pdf(f)))

@@ -6,14 +6,22 @@ Program nie wymaga instalacji ani Pythona.
 1. Rozpakuj cały folder "Generator WT" w dowolne miejsce, np. na Pulpit albo do Dokumentów.
    Nie rozpakowuj go do "Program Files", bo program zapisuje listy i pamięć podręczną
    we własnym folderze "dane".
-2. Uruchom "Generator WT.exe".
+2. Do pracy z plikami DWG zainstaluj darmowy program ODA File Converter:
+   https://www.opendesign.com/guestfiles/oda_file_converter
+   (licencja ODA nie pozwala dołączyć go do paczki programu). Bez niego program
+   otwiera i zapisuje tylko pliki DXF.
+3. Uruchom "Generator WT.exe".
    Przy pierwszym uruchomieniu Windows może pokazać okno "System Windows ochronił ten komputer".
    Program nie ma płatnego podpisu cyfrowego. Kliknij "Więcej informacji", a potem "Uruchom mimo to".
-3. Kliknij "Wybierz plik DXF…". Na próbę możesz otworzyć "przyklady\baza robocza.dxf".
-4. Sprawdź zakładki "Wykaz słupów", "Kontrola projektu" i "Arkusze",
+4. Kliknij "Wybierz…" i wskaż rysunek projektu DWG albo DXF.
+   Na próbę możesz otworzyć "przyklady\baza robocza.dxf".
+5. Sprawdź mapę, wykaz słupów i panel "Do sprawdzenia",
    potem kliknij "Numeruj i generuj dokumenty".
 
-Do pobierania adresów (GUGiK), sprawdzania ulic i podkładu mapy (OpenStreetMap) potrzebny jest internet.
+Rysunki wynikowe (numeracja, plan orientacyjny) zapisują się domyślnie jako DWG.
+Format zmienisz w sekcji "4. Wyniki" (DWG albo DXF).
+
+Do pobierania adresów (GUGiK), sprawdzania ulic i podkładów mapy potrzebny jest internet.
 Bez internetu odznacz "Pobieraj adresy z GUGiK" i plan orientacyjny.
 
 Pliki w folderze programu:
@@ -22,5 +30,5 @@ Pliki w folderze programu:
   dane\slowniki.xlsx - listy operatorów i rejonów energetycznych (przycisk "Edytuj listy").
   przyklady\  - przykładowy projekt.
 
-Wyniki zapisują się domyślnie w folderze wybranego pliku DXF.
-Plik *_orientacja.dxf przenoś zawsze razem z plikami *_orientacja*.jpg i .jgw.
+Wyniki zapisują się domyślnie w folderze wybranego rysunku.
+Plik *_orientacja.dwg (lub .dxf) przenoś zawsze razem z plikami *_orientacja*.jpg i .jgw.

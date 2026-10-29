@@ -23,8 +23,8 @@ from shapely.geometry import LineString, box
 from shapely.ops import unary_union
 
 from . import arkusze as ark
-from . import dxf_writer, export, geocoder, numbering, pismo, podklad, reader, slowniki, stan
-from . import ulice
+from . import dwg, dxf_writer, export, geocoder, numbering, pismo, podklad, reader, slowniki
+from . import stan, ulice
 from .config import Config
 from .model import BlednyKlik, StacjaTrafo, Wierzcholek
 
@@ -62,7 +62,7 @@ class Projekt:
         self.plik = Path(plik)
         self.stan = stan.wczytaj(self.plik_stanu)
         self.tolerancja_analizy = self.cfg.tolerancja_slupa
-        self.doc = reader.wczytaj_dxf(str(self.plik))
+        self.doc = dwg.wczytaj(self.plik, self.cfg.oda_sciezka or None)  # DWG albo DXF
         self.slupy, self.bledne_kliki = reader.wczytaj_slupy(self.doc, self.cfg)
         if not self.slupy:
             raise ValueError(f"Brak polilinii na warstwie '{self.cfg.warstwa_tele}'.")
@@ -254,6 +254,14 @@ class Projekt:
     def sciezka(self, katalog: Path, przyrostek: str) -> Path:
         return Path(katalog) / f"{self.plik.stem}_{przyrostek}"
 
+    @property
+    def format_rysunkow(self) -> str:
+        """'dwg' albo 'dxf' - rozszerzenie rysunków wynikowych (numeracja, orientacja)."""
+        return "dxf" if self.cfg.format_rysunkow.lower() == "dxf" else "dwg"
+
+    def oda_dostepny(self) -> bool:
+        return dwg.dostepny(self.cfg.oda_sciezka or None)
+
     # ------------------------------------------------------------ arkusze
     def szablon_doc(self):
         if self._szablon_doc is None:
@@ -304,7 +312,7 @@ class Projekt:
                              wysokosc_branzy=self.cfg.wysokosc_branzy)
             ark.rysuj_obrysy(self.doc, self.arkusze, self.cfg.warstwa_obrysow,
                              drukowalna=False, wys_tekstu=20.0)
-        self.doc.saveas(str(wyjscie))
+        dwg.zapisz(self.doc, wyjscie, self.cfg.oda_sciezka or None)  # DWG albo DXF
 
     def zapisz_orientacje(self, wyjscie: Path, mianownik: int, szarosc: bool,
                           operator: dict | None, opracowal: str | None, data: str | None,
@@ -386,7 +394,7 @@ class Projekt:
                          wysokosc_branzy=self.cfg.wysokosc_branzy)
         for n in domyslne:  # pusty układ 'Layout1' tworzony przez ezdxf
             doc.layouts.delete(n)
-        doc.saveas(str(wyjscie))
+        dwg.zapisz(doc, wyjscie, self.cfg.oda_sciezka or None)  # DWG albo DXF
         self._orient_doc = doc
         self._orient_podklady = podklady
         self._orient_podklad_arkusza = podklad_arkusza

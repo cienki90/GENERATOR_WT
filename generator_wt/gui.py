@@ -555,8 +555,8 @@ class OknoGlowne(QMainWindow):
 
         g1 = QGroupBox("1. Plik projektowy")
         f1 = QVBoxLayout(g1)
-        self.e_plik = QLineEdit(readOnly=True, placeholderText="Wybierz plik DXF projektu…")
-        b_plik = QPushButton(ikona(QStyle.SP_DirOpenIcon), " Wybierz plik DXF…")
+        self.e_plik = QLineEdit(readOnly=True, placeholderText="Wybierz rysunek projektu (DWG/DXF)…")
+        b_plik = QPushButton(ikona(QStyle.SP_DirOpenIcon), " Wybierz rysunek DWG/DXF…")
         b_plik.clicked.connect(self.wybierz_plik)
         self.cb_geo = QCheckBox("Pobieraj adresy z GUGiK (miejscowość, ulica, gmina)")
         self.cb_geo.setChecked(True)
@@ -620,7 +620,7 @@ class OknoGlowne(QMainWindow):
 
         g4 = QGroupBox("4. Wyniki")
         f4 = QVBoxLayout(g4)
-        self.cb_dxf = QCheckBox("Numeracja w DXF (*_numeracja.dxf)")
+        self.cb_dxf = QCheckBox("Rysunek z numeracją (*_numeracja.dwg)")
         self.cb_arkusze = QCheckBox("    + arkusze 1:1000 (układy 1, 2, 3…)")
         self.cb_pdf_num = QCheckBox("    + arkusze jako PDF (*_numeracja.pdf)")
         self.cb_pdf_num.setToolTip("Wielostronicowy PDF: po jednym arkuszu 1:1000 na stronę A3")
@@ -633,7 +633,7 @@ class OknoGlowne(QMainWindow):
         self._zwloka_arkuszy = QTimer(self, singleShot=True, interval=700)
         self._zwloka_arkuszy.timeout.connect(self.przelicz_arkusze)
         self.s_zakladka.valueChanged.connect(self._zwloka_arkuszy.start)
-        self.cb_orient = QCheckBox("Plan orientacyjny (*_orientacja.dxf + jpg)")
+        self.cb_orient = QCheckBox("Plan orientacyjny (*_orientacja.dwg + jpg)")
         rz_z = QHBoxLayout()
         rz_z.setContentsMargins(22, 0, 0, 0)
         rz_z.addWidget(QLabel("Zakładka arkuszy:"))
@@ -998,7 +998,9 @@ class OknoGlowne(QMainWindow):
             return
         start = self.e_plik.text() or self.ustawienia.value("ostatni_plik", "")
         plik, _ = QFileDialog.getOpenFileName(self, "Wybierz plik projektu", start,
-                                              "Rysunek DXF (*.dxf);;Wszystkie pliki (*)")
+                                              "Rysunek DWG (*.dwg);;Rysunek DXF (*.dxf);;"
+                                              "Rysunki DWG i DXF (*.dwg *.dxf);;"
+                                              "Wszystkie pliki (*)")
         if plik and not self.zajety():
             self.e_plik.setText(plik)
             self.ustawienia.setValue("ostatni_plik", plik)
@@ -1535,8 +1537,12 @@ class OknoGlowne(QMainWindow):
         data_od = self.d_od.date().toString("dd.MM.yyyy")
         data_do = self.e_do.text().strip() or "-"
         zadania = []  # (przyrostek pliku, funkcja(cel, zadanie))
+        rys = p.format_rysunkow  # DWG domyślnie; bez programu ODA - DXF
+        if rys == "dwg" and not p.oda_dostepny():
+            rys = "dxf"
+            self.log("Brak programu ODA File Converter – rysunki zostaną zapisane jako DXF.")
         if self.cb_dxf.isChecked():
-            zadania.append(("numeracja.dxf", lambda f, z: p.zapisz_dxf(
+            zadania.append((f"numeracja.{rys}", lambda f, z: p.zapisz_dxf(
                 f, arkusze, operator, opracowal, data_rys)))
             if arkusze and self.cb_pdf_num.isChecked():
                 zadania.append(("numeracja.pdf",
@@ -1567,7 +1573,7 @@ class OknoGlowne(QMainWindow):
                     z.postep.emit(0, 0, "Plan orientacyjny: PDF…")
                     p.zapisz_orientacje_pdf(pdf_orient, z.log.emit)
                     z.log.emit(f"Zapisano: {pdf_orient}")
-            zadania.append(("orientacja.dxf", orient))
+            zadania.append((f"orientacja.{rys}", orient))
 
         def praca(z):
             zapisane, bledy = [], []

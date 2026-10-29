@@ -16,7 +16,7 @@ import traceback
 from datetime import date
 from pathlib import Path
 
-from .. import slowniki, stan
+from .. import dwg, slowniki, stan
 from ..config import KATALOG, Config
 from ..pismo import adres_slupa
 from ..projekt import Projekt
@@ -27,7 +27,7 @@ METODY = {
     "przelicz_arkusze", "ustaw_pole", "przelacz_wykluczenie", "przyjmij_ulice",
     "podsumowanie_generowania", "generuj", "wybierz_plik", "wybierz_katalog",
     "otworz_folder", "edytuj_listy", "odswiez_slowniki", "operator_po_nip",
-    "zapisz_operatora", "zapisz_ustawienia_okna",
+    "zapisz_operatora", "zapisz_ustawienia_okna", "wskaz_oda", "otworz_strone_oda",
 }
 
 POLA_EDYTOWALNE = set(stan.POLA_RECZNE)
@@ -54,6 +54,7 @@ class Api:
         self._praca: str | None = None
         self._ostatnia_analiza: str | None = None
         self._rejon_domyslny: str | None = None
+        self.cfg.oda_sciezka = self._ustawienia_okna().get("oda_sciezka", "") or self.cfg.oda_sciezka
         self.odswiez_slowniki()
 
     # ================================================================ zdarzenia i praca w tle
@@ -158,6 +159,31 @@ class Api:
     def edytuj_listy(self) -> None:
         _otworz(self.cfg.plik_slownikow)
 
+    # ================================================================ DWG (ODA File Converter)
+    def _oda(self) -> dict:
+        sciezka = dwg.znajdz_oda(self.cfg.oda_sciezka or None)
+        return {"dostepny": sciezka is not None, "sciezka": sciezka or "", "adres": dwg.ADRES_ODA}
+
+    def wskaz_oda(self, sciezka: str = "") -> dict:
+        """Ścieżka do ODAFileConverter.exe - z okna wyboru pliku albo podana wprost."""
+        if not sciezka:
+            if self.dialogi is None:
+                return {**self._oda(), "brak_dialogu": True}
+            sciezka = self.dialogi.wybierz_program(self.cfg.oda_sciezka or r"C:\Program Files\ODA")
+            if not sciezka:
+                return self._oda()
+        p = Path(str(sciezka).strip().strip('"'))
+        if not p.is_file() or p.suffix.lower() != ".exe":
+            raise BladApi(f"To nie jest plik programu: {p}")
+        self.cfg.oda_sciezka = str(p)
+        self.zapisz_ustawienia_okna({"oda_sciezka": str(p)})
+        self.log(f"ODA File Converter: {p}")
+        return self._oda()
+
+    def otworz_strone_oda(self) -> None:
+        import webbrowser
+        webbrowser.open(dwg.ADRES_ODA)
+
     def operator_po_nip(self, nip: str, klucz_gus: str = "") -> dict:
         from .. import rejestry
         self.zapisz_ustawienia_okna({"klucz_gus": klucz_gus or ""})
@@ -210,7 +236,7 @@ class Api:
         return {"slowniki": self._slowniki(), "ustawienia": u,
                 "ostatni_plik": ostatni if ostatni and Path(ostatni).exists() else "",
                 "dialogi": self.dialogi is not None, "dzis": date.today().strftime("%d.%m.%Y"),
-                "nr_zdarzenia": nr, "dziennik": dziennik,
+                "nr_zdarzenia": nr, "dziennik": dziennik, "oda": self._oda(),
                 "miesiac": date.today().strftime("%m.%Y"), "praca": self._praca,
                 "projekt": self.dane() if self.projekt and not self.zajety() else None,
                 "domyslne": {"tolerancja_slupa": self.cfg.tolerancja_slupa,
@@ -250,9 +276,13 @@ class Api:
                  ) -> dict:
         plik = str(plik or "").strip().strip('"')
         if not plik:
-            raise BladApi("Wybierz plik DXF projektu.")
+            raise BladApi("Wybierz plik DWG albo DXF projektu.")
         if not Path(plik).is_file():
             raise BladApi(f"Nie ma pliku: {plik}")
+        if Path(plik).suffix.lower() not in (".dwg", ".dxf"):
+            raise BladApi("Program obsługuje rysunki DWG i DXF.")
+        if dwg.jest_dwg(plik) and not self._oda()["dostepny"]:
+            raise BladApi(dwg.KOMUNIKAT_BRAK_ODA)
         self._konfiguracja(ustawienia)
         rejon = (ustawienia or {}).get("rejon")
         projekt = Projekt(self.cfg)
@@ -260,7 +290,8 @@ class Api:
         self.log(f"Analiza: {plik}")
 
         def praca(postep):
-            postep(0, 0, "Odczyt pliku DXF…")
+            postep(0, 0, "Odczyt pliku DWG (konwersja ODA)…" if dwg.jest_dwg(plik)
+                   else "Odczyt pliku DXF…")
             projekt.wczytaj(plik)
             bledy = 0
             if geokodowanie:
@@ -292,7 +323,7 @@ class Api:
 
     def _p(self) -> Projekt:
         if self.projekt is None:
-            raise BladApi("Najpierw wczytaj i przeanalizuj projekt DXF.")
+            raise BladApi("Najpierw wczytaj i przeanalizuj projekt DWG/DXF.")
         return self.projekt
 
     def _zapisz_stan(self, ustawienia: dict | None = None) -> None:
@@ -425,7 +456,11 @@ class Api:
         p.planuj()
         kat = self._katalog(o.get("katalog"))
         wsp = bool(o.get("pismo") or o.get("rozbudowana") or o.get("uproszczona"))
-        return {"plan": p.opis_planu(), "istniejaca": p.istniejaca_numeracja(),
+        fmt = _format(o)
+        rysunki = bool(o.get("dxf") or o.get("orientacja"))
+        return {"format": fmt, "rysunki": rysunki,
+                "brak_oda": rysunki and fmt == "dwg" and not self._oda()["dostepny"],
+                "plan": p.opis_planu(), "istniejaca": p.istniejaca_numeracja(),
                 "warstwa": self.cfg.warstwa_numeracji, "bledne_kliki": len(p.bledne_kliki),
                 "arkusze": len(p.arkusze) if o.get("dxf") and o.get("arkusze") else 0,
                 "katalog": str(kat), "pytaj_o_uklad": wsp, "projektowa": bool(o.get("projektowa"))}
@@ -438,16 +473,19 @@ class Api:
         opracowal = (o.get("opracowal") or "").strip() or None
         data_rys = (o.get("data_rysunku") or "").strip() or None
         p.cfg.wgs84 = bool(o.get("wgs84"))
+        fmt = p.cfg.format_rysunkow = _format(o)  # rysunki wynikowe: dwg / dxf
+        if fmt == "dwg" and (o.get("dxf") or o.get("orientacja")) and not self._oda()["dostepny"]:
+            raise BladApi(dwg.KOMUNIKAT_BRAK_ODA)
         p.przypisz_rejony(self.rejony, self._rejon(o.get("rejon")))
         self.zapisz_ustawienia_okna({k: o.get(k) for k in (
-            "opracowal", "operator", "rejon", "wyniki") if k in o})
+            "opracowal", "operator", "rejon", "wyniki", "format") if k in o})
         if o.get("ustawienia"):
             p.zapisz_ustawienia(o["ustawienia"])
 
         zadania = []
-        if o.get("dxf"):
+        if o.get("dxf"):  # "dxf" = rysunek numeracji (nazwa klucza z czasów samego DXF)
             arkusze = bool(o.get("arkusze"))
-            zadania.append(("numeracja.dxf", lambda f, log, post: p.zapisz_dxf(
+            zadania.append((f"numeracja.{fmt}", lambda f, log, post: p.zapisz_dxf(
                 f, arkusze, operator, opracowal, data_rys)))
             if arkusze and o.get("pdf_numeracji"):
                 zadania.append(("numeracja.pdf",
@@ -478,7 +516,7 @@ class Api:
                     post(0, 0, "Plan orientacyjny: PDF…")
                     p.zapisz_orientacje_pdf(cel, log)
                     log(f"Zapisano: {cel}")
-            zadania.append(("orientacja.dxf", zapisz_orient))
+            zadania.append((f"orientacja.{fmt}", zapisz_orient))
         if not zadania:
             raise BladApi("Zaznacz co najmniej jeden plik do zapisania.")
 
@@ -505,6 +543,11 @@ class Api:
 
 
 # ==================================================================== pomocnicze
+
+def _format(opcje: dict) -> str:
+    """Format rysunków wynikowych z opcji okna: 'dwg' (domyślnie) albo 'dxf'."""
+    return "dxf" if str(opcje.get("format") or "dwg").lower() == "dxf" else "dwg"
+
 
 def _cyfry(t) -> str:
     return "".join(c for c in str(t or "") if c.isdigit())

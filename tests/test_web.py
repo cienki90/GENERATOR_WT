@@ -87,6 +87,7 @@ def test_przelicz_i_arkusze(api, dxf):
 def test_generowanie(api, dxf):
     analizuj(api, dxf)
     o = {"dxf": True, "arkusze": True, "projektowa": True, "pismo": True, "wgs84": True,
+         "format": "dxf",
          "katalog": str(dxf.parent / "wyniki"), "tolerancja_slupa": 5.0}
     s = api.podsumowanie_generowania(o)
     assert s["arkusze"] == 18 and s["pytaj_o_uklad"] and not s.get("ponowna_analiza")
@@ -208,6 +209,6 @@ def test_okno_qt_webengine(tmp_path, monkeypatch):
 
 def test_serwer_bledy_jako_komunikat(serwer):
     kod, d = _post(serwer, "dane")
-    assert kod == 200 and d == {"ok": False, "blad": "Najpierw wczytaj i przeanalizuj projekt DXF."}
+    assert kod == 200 and d == {"ok": False, "blad": "Najpierw wczytaj i przeanalizuj projekt DWG/DXF."}
     kod, d = _post(serwer, "analizuj", {"nieznany": 1})
     assert kod == 200 and not d["ok"]
