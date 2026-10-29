@@ -63,14 +63,15 @@ def uruchom() -> int:
                     assert json.loads(r.read())["ok"]
             finally:
                 s.stop()
-        from .web import okno  # noqa: F401 - Qt WebEngine dołączony do paczki
-        linie.append("okno webowe: OK")
-
         import shiboken6
+        from PySide6.QtCore import Qt
         from PySide6.QtWidgets import QApplication
 
-        from .gui import OknoGlowne
+        QApplication.setAttribute(Qt.AA_ShareOpenGLContexts)  # wymagane przez Qt WebEngine
         app = QApplication.instance() or QApplication(sys.argv)
+        linie.append(f"okno webowe: {_okno_webowe(app)}")
+
+        from .gui import OknoGlowne
         okno = OknoGlowne()
         okno.close()
         # jawne usunięcie okna przed aplikacją - inaczej sprzątanie przy wyjściu
@@ -86,3 +87,41 @@ def uruchom() -> int:
         kod = 1
     raport.write_text("\n".join(linie), encoding="utf-8")
     return kod
+
+
+def _okno_webowe(app, limit_ms: int = 90000) -> str:
+    """Otwiera okno programu i czeka, aż strona się wczyta, a interfejs połączy się
+    z programem (mapa OpenLayers i wywołanie API). Sprawdza kompletność Qt WebEngine
+    w paczce - także po przycięciu jej skryptem przytnij_exe.py."""
+    import shiboken6
+    from PySide6.QtCore import QEventLoop, QTimer
+
+    from .web.okno import OknoWeb
+
+    okno = OknoWeb()
+    wynik = {"stan": "brak odpowiedzi strony"}
+    petla = QEventLoop()
+    skrypt = ("(typeof ol === 'object' ? 'mapa' : 'BRAK MAPY') + ' / ' + "
+              "(document.body.dataset.gotowy ? 'interfejs gotowy' : "
+              "document.getElementById('status').textContent)")
+
+    def sprawdz():
+        okno.widok.page().runJavaScript(skrypt, 0, odpowiedz)
+
+    def odpowiedz(tekst):
+        wynik["stan"] = str(tekst)
+        if wynik["stan"] == "mapa / interfejs gotowy":
+            petla.quit()
+
+    zegar = QTimer(interval=500, timeout=sprawdz)
+    zegar.start()
+    QTimer.singleShot(limit_ms, petla.quit)
+    petla.exec()
+    zegar.stop()
+    okno.serwer.stop()
+    okno.close()
+    shiboken6.delete(okno)
+    app.processEvents()
+    if wynik["stan"] != "mapa / interfejs gotowy":
+        raise RuntimeError(f"okno webowe nie wczytało interfejsu: {wynik['stan']}")
+    return "OK"

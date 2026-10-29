@@ -12,11 +12,12 @@ import os
 import subprocess
 import sys
 import threading
+import time
 import traceback
 from datetime import date
 from pathlib import Path
 
-from .. import dwg, slowniki, stan
+from .. import aktualizacje, dwg, slowniki, stan
 from ..config import KATALOG, Config
 from ..pismo import adres_slupa
 from ..projekt import Projekt
@@ -28,10 +29,14 @@ METODY = {
     "podsumowanie_generowania", "generuj", "wybierz_plik", "wybierz_katalog",
     "otworz_folder", "edytuj_listy", "odswiez_slowniki", "operator_po_nip",
     "zapisz_operatora", "zapisz_ustawienia_okna", "wskaz_oda", "otworz_strone_oda",
+    "sprawdz_oda", "cofnij", "ponow", "pomin_zmiane_pliku", "otworz_strone_aktualizacji",
 }
 
 POLA_EDYTOWALNE = set(stan.POLA_RECZNE)
 MAKS_ZDARZEN = 2000
+MAKS_OSTATNICH = 10  # lista ostatnich projektów
+MAKS_COFNIEC = 50
+ZAPIS_TRWA = 1.5  # [s] plik rysunku zmieniony tak niedawno może być jeszcze zapisywany
 
 
 class BladApi(Exception):
@@ -54,6 +59,12 @@ class Api:
         self._praca: str | None = None
         self._ostatnia_analiza: str | None = None
         self._rejon_domyslny: str | None = None
+        self.plik_startowy: str | None = None  # z wiersza poleceń / upuszczony na ikonę
+        self._czas_pliku: float | None = None  # data zmiany rysunku przy analizie
+        self._cofnij: list[tuple[str, dict]] = []
+        self._ponow: list[tuple[str, dict]] = []
+        self._aktualizacja: dict | None = None
+        self._sprawdzono_aktualizacje = False
         self.cfg.oda_sciezka = self._ustawienia_okna().get("oda_sciezka", "") or self.cfg.oda_sciezka
         self.odswiez_slowniki()
 
@@ -70,7 +81,7 @@ class Api:
     def zdarzenia(self, od: int = 0) -> dict:
         with self._blokada_zdarzen:
             nowe = [z for z in self._zdarzenia if z["nr"] > od]
-        return {"zdarzenia": nowe, "praca": self._praca}
+        return {"zdarzenia": nowe, "praca": self._praca, "plik_zmieniony": self._plik_zmieniony()}
 
     def zajety(self) -> bool:
         return self._praca is not None
@@ -160,9 +171,13 @@ class Api:
         _otworz(self.cfg.plik_slownikow)
 
     # ================================================================ DWG (ODA File Converter)
-    def _oda(self) -> dict:
-        sciezka = dwg.znajdz_oda(self.cfg.oda_sciezka or None)
+    def _oda(self, odswiez: bool = False) -> dict:
+        sciezka = dwg.znajdz_oda(self.cfg.oda_sciezka or None, odswiez)
         return {"dostepny": sciezka is not None, "sciezka": sciezka or "", "adres": dwg.ADRES_ODA}
+
+    def sprawdz_oda(self) -> dict:
+        """Ponowne wyszukanie konwertera (np. po jego instalacji)."""
+        return self._oda(odswiez=True)
 
     def wskaz_oda(self, sciezka: str = "") -> dict:
         """Ścieżka do ODAFileConverter.exe - z okna wyboru pliku albo podana wprost."""
@@ -233,14 +248,65 @@ class Api:
             nr = self._nr_zdarzenia
             dziennik = [z["tekst"] for z in self._zdarzenia if z["typ"] == "log"][-300:]
         ostatni = u.get("ostatni_plik", "")
+        startowy, self.plik_startowy = self.plik_startowy, None
+        self._sprawdz_aktualizacje()
         return {"slowniki": self._slowniki(), "ustawienia": u,
                 "ostatni_plik": ostatni if ostatni and Path(ostatni).exists() else "",
+                "ostatnie": self._ostatnie(u), "plik_startowy": startowy,
+                "wersja": aktualizacje.opis_wersji(), "aktualizacja": self._aktualizacja,
                 "dialogi": self.dialogi is not None, "dzis": date.today().strftime("%d.%m.%Y"),
                 "nr_zdarzenia": nr, "dziennik": dziennik, "oda": self._oda(),
                 "miesiac": date.today().strftime("%m.%Y"), "praca": self._praca,
                 "projekt": self.dane() if self.projekt and not self.zajety() else None,
                 "domyslne": {"tolerancja_slupa": self.cfg.tolerancja_slupa,
                              "zakladka": self.cfg.zakladka}}
+
+    @staticmethod
+    def _ostatnie(u: dict) -> list[str]:
+        return [p for p in u.get("ostatnie_pliki") or [] if Path(p).is_file()][:MAKS_OSTATNICH]
+
+    def _dopisz_ostatni(self, plik: str) -> None:
+        u = self._ustawienia_okna()
+        klucz = os.path.normcase(os.path.abspath(plik))
+        lista = [plik] + [p for p in u.get("ostatnie_pliki") or []
+                          if os.path.normcase(os.path.abspath(p)) != klucz]
+        self.zapisz_ustawienia_okna({"ostatni_plik": plik,
+                                     "ostatnie_pliki": lista[:MAKS_OSTATNICH]})
+
+    # ================================================================ aktualizacje
+    def _sprawdz_aktualizacje(self) -> None:
+        """Raz na uruchomienie, w tle: wynik jako zdarzenie 'aktualizacja'."""
+        if self._sprawdzono_aktualizacje or aktualizacje.wersja() is None:
+            return
+        self._sprawdzono_aktualizacje = True
+
+        def watek():
+            self._aktualizacja = aktualizacje.sprawdz()
+            if self._aktualizacja:
+                self._zdarzenie("aktualizacja", **self._aktualizacja)
+        threading.Thread(target=watek, name="wt-aktualizacje", daemon=True).start()
+
+    def otworz_strone_aktualizacji(self) -> None:
+        import webbrowser
+        webbrowser.open((self._aktualizacja or {}).get("adres") or aktualizacje.ADRES_WYDAN)
+
+    # ================================================================ zmiany rysunku na dysku
+    def _czas_zmiany(self) -> float | None:
+        try:
+            return self.projekt.plik.stat().st_mtime if self.projekt else None
+        except OSError:
+            return None
+
+    def _plik_zmieniony(self) -> bool:
+        """Rysunek zapisany ponownie (np. w programie CAD) od ostatniej analizy."""
+        if self.projekt is None or self._czas_pliku is None or self.zajety():
+            return False
+        t = self._czas_zmiany()
+        return t is not None and t != self._czas_pliku and time.time() - t > ZAPIS_TRWA
+
+    def pomin_zmiane_pliku(self) -> None:
+        """Użytkownik nie chce ponownej analizy - nie pytaj do kolejnej zmiany pliku."""
+        self._czas_pliku = self._czas_zmiany()
 
     def wybierz_plik(self, start: str = "") -> dict:
         if self.dialogi is None:
@@ -286,10 +352,14 @@ class Api:
         self._konfiguracja(ustawienia)
         rejon = (ustawienia or {}).get("rejon")
         projekt = Projekt(self.cfg)
-        self.zapisz_ustawienia_okna({"ostatni_plik": plik})
+        self._dopisz_ostatni(plik)
         self.log(f"Analiza: {plik}")
 
         def praca(postep):
+            try:
+                czas = Path(plik).stat().st_mtime
+            except OSError:
+                czas = None
             postep(0, 0, "Odczyt pliku DWG (konwersja ODA)…" if dwg.jest_dwg(plik)
                    else "Odczyt pliku DXF…")
             projekt.wczytaj(plik)
@@ -309,6 +379,9 @@ class Api:
             bez = projekt.przypisz_rejony(self.rejony, self._rejon(rejon))
             self.projekt = projekt
             self._ostatnia_analiza = plik
+            self._czas_pliku = czas
+            self._cofnij.clear()
+            self._ponow.clear()
             if bez:
                 self.log("Gminy bez rejonu w liście (użyto rejonu domyślnego): " + ", ".join(bez))
             if projekt.poprawek_zastosowanych:
@@ -358,6 +431,33 @@ class Api:
             return {"arkuszy": n}
         return self._uruchom("arkusze", praca)
 
+    # ---------------------------------------------------------------- cofanie zmian
+    def _zapamietaj(self, opis: str) -> None:
+        """Stan przed ręczną zmianą - do cofnięcia (Ctrl+Z)."""
+        self._cofnij.append((opis, self._p().migawka()))
+        del self._cofnij[:-MAKS_COFNIEC]
+        self._ponow.clear()
+
+    def _przenies(self, skad: list, dokad: list, slowo: str) -> dict:
+        self._wolny()
+        p = self._p()
+        if not skad:
+            raise BladApi("Nie ma zmian do cofnięcia." if dokad is self._ponow
+                          else "Nie ma zmian do ponowienia.")
+        opis, m = skad.pop()
+        dokad.append((opis, p.migawka()))
+        p.przywroc(m)
+        p.przypisz_rejony(self.rejony, self._rejon(self._rejon_domyslny))
+        self._zapisz_stan()
+        self.log(f"{slowo}: {opis}")
+        return self.dane()
+
+    def cofnij(self) -> dict:
+        return self._przenies(self._cofnij, self._ponow, "Cofnięto")
+
+    def ponow(self) -> dict:
+        return self._przenies(self._ponow, self._cofnij, "Ponowiono")
+
     def ustaw_pole(self, id: int, atr: str, wartosc) -> dict:
         self._wolny()
         p = self._p()
@@ -365,6 +465,7 @@ class Api:
             raise BladApi(f"Pola '{atr}' nie można zmieniać.")
         w = self._slup(id)
         tekst = str(wartosc or "").strip()
+        self._zapamietaj(f"{_NAZWY_POL.get(atr, atr)} słupa {w.etykieta or '(wył.)'}")
         p.ustaw_pole(w, atr, tekst if atr == "uwagi" else (tekst or None))
         if atr == "gmina":
             p.przypisz_rejony(self.rejony, self._rejon(self._rejon_domyslny))
@@ -378,6 +479,8 @@ class Api:
         self._wolny()
         p = self._p()
         w = self._slup(id)
+        self._zapamietaj(f"{'włączenie' if w.wykluczony else 'wyłączenie'} słupa "
+                         f"{w.etykieta or w.id_slupa or ''}".rstrip())
         p.ustaw_wykluczenie(w, not w.wykluczony)
         p.planuj()
         p.odswiez_miejscowosci_arkuszy()
@@ -390,6 +493,7 @@ class Api:
     def przyjmij_ulice(self) -> dict:
         self._wolny()
         p = self._p()
+        self._zapamietaj("przyjęcie ulic z dróg")
         n = p.przyjmij_ulice_z_drog()
         self.log(f"Poprawiono ulice: {n} słupów")
         self._zapisz_stan()
@@ -441,6 +545,8 @@ class Api:
                 "tolerancja_analizy": p.tolerancja_analizy},
             "kontrola": kontrola(p, self.cfg),
             "plik_stanu": p.plik_stanu.name,
+            "cofnij": self._cofnij[-1][0] if self._cofnij else None,
+            "ponow": self._ponow[-1][0] if self._ponow else None,
         }
 
     # ================================================================ generowanie
@@ -543,6 +649,11 @@ class Api:
 
 
 # ==================================================================== pomocnicze
+
+_NAZWY_POL = {"miejscowosc": "miejscowość", "ulica": "ulica", "gmina": "gmina",
+              "rodzaj_slupa": "rodzaj", "typ_slupa": "typ słupa", "nr_w_sieci": "nr w sieci",
+              "uwagi": "uwagi"}
+
 
 def _format(opcje: dict) -> str:
     """Format rysunków wynikowych z opcji okna: 'dwg' (domyślnie) albo 'dxf'."""

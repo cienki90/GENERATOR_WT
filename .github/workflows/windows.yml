@@ -32,14 +32,21 @@ jobs:
           QT_QPA_PLATFORM: offscreen
         run: python -m pytest
 
+      - name: Numer wersji (sprawdzanie aktualizacji w programie)
+        run: python -m generator_wt.aktualizacje ${{ github.sha }} ${{ github.ref_name }}
+
       - name: Budowa programu
         run: >
           pyinstaller --noconfirm --windowed --name "Generator WT"
           --collect-all pyproj --collect-all pymupdf --collect-data docx --collect-data ezdxf
           --collect-submodules scipy.optimize
           --add-data "generator_wt/web/static;generator_wt/web/static"
+          --add-data "generator_wt/wersja.json;generator_wt"
           --exclude-module matplotlib
           --exclude-module tkinter uruchom.pyw
+
+      - name: Przycięcie paczki (nieużywane części Qt)
+        run: python przytnij_exe.py "dist/Generator WT"
 
       - name: Pliki programu (szablony, listy, przykład)
         shell: pwsh

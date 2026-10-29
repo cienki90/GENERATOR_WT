@@ -32,6 +32,7 @@
   const S = {
     dane: null, zazn: null, praca: null, nrZd: 0, dialogi: false, plikUstawien: null,
     mapa: null, kod: null, warstwy: {}, wygenerowano: false, start: null, polaczenie: true,
+    ostatnie: [], aktualizacja: null,
   };
 
   // ------------------------------------------------------------------ pomocnicze
@@ -104,6 +105,7 @@
       zaleznosciWynikow();
     } else postep(0, 0);
     odswiezKarte();
+    renderCofnij();
   }
   async function petla() {
     try {
@@ -115,7 +117,9 @@
         if (e.typ === "log") log(e.tekst);
         else if (e.typ === "postep") postep(e.i, e.n, e.opis);
         else if (e.typ === "koniec") await koniecPracy(e);
+        else if (e.typ === "aktualizacja") pokazAktualizacje(e);
       }
+      pokazZmianePliku(!!z.plik_zmieniony && !S.praca && !!S.dane);
     } catch (e) {
       if (S.polaczenie) { S.polaczenie = false; status("Brak połączenia z programem – czy okno programu jest otwarte?"); }
     }
@@ -217,7 +221,48 @@
     }
     await rpc("analizuj", { plik, geokodowanie: $("#geo").checked, ustawienia: ustawienia() });
     ustawPrace("analiza");
+    pokazZmianePliku(false);
+    renderOstatnie([plik, ...S.ostatnie.filter((x) => x.toLowerCase() !== plik.toLowerCase())]);
   });
+  // rysunek upuszczony na okno albo podany przy uruchomieniu (okno.py)
+  window.wtOtworzPlik = (plik) => {
+    if (S.praca) { status("Program pracuje – poczekaj na zakończenie i upuść rysunek ponownie."); return; }
+    $("#plik").value = plik;
+    analizuj();
+  };
+  function renderOstatnie(lista) {
+    S.ostatnie = lista.slice(0, 10);
+    $("#ostatnie").classList.toggle("ukryte", !S.ostatnie.length);
+    $("#ostatnie-menu").replaceChildren(el("div", { class: "menu-tytul", text: "Ostatnie projekty" }),
+      ...S.ostatnie.map((p) => {
+        const nazwa = p.split(/[\\/]/).pop();
+        return el("button", { title: p, onclick: () => { zamknijMenu(); window.wtOtworzPlik(p); } },
+                  nazwa, el("span", { text: p.slice(0, p.length - nazwa.length) }));
+      }));
+  }
+  function zamknijMenu() {
+    $$(".rozwijane .menu").forEach((m) => m.classList.add("ukryte"));
+    $$(".rozwijane > button").forEach((b) => b.setAttribute("aria-expanded", "false"));
+  }
+  function przelaczMenu(przycisk, menu) {
+    const otworz = menu.classList.contains("ukryte");
+    zamknijMenu();
+    menu.classList.toggle("ukryte", !otworz);
+    przycisk.setAttribute("aria-expanded", String(otworz));
+  }
+
+  // ------------------------------------------------------------------ zmiany rysunku, nowa wersja
+  function pokazZmianePliku(widoczny) {
+    const b = $("#zmiana-pliku");
+    if (widoczny && S.dane) $("#zmiana-pliku-tekst").textContent = `Rysunek ${S.dane.nazwa} zmienił się na dysku.`;
+    b.classList.toggle("ukryte", !widoczny);
+  }
+  function pokazAktualizacje(a) {
+    S.aktualizacja = a;
+    const b = $("#aktualizacja");
+    b.classList.remove("ukryte");
+    b.title = `Na GitHubie jest nowsza wersja programu${a.data ? ` (z ${dataPL(a.data)})` : ""} – kliknij, aby ją pobrać`;
+  }
   const wybierzPlik = bezpiecznie(async () => {
     if (S.praca) return;
     const r = await rpc("wybierz_plik", { start: $("#plik").value.trim() });
@@ -241,6 +286,17 @@
     ustawPrace("arkusze");
   }), 600);
 
+  async function cofnijLubPonow(metoda) {
+    if (!S.dane || !S.dane[metoda]) return;
+    await zmien(metoda, {});
+  }
+  function renderCofnij() {
+    for (const [id, klucz, nazwa, skrot] of [["#cofnij", "cofnij", "Cofnij", "Ctrl+Z"], ["#ponow", "ponow", "Ponów", "Ctrl+Y"]]) {
+      const opis = S.dane && S.dane[klucz];
+      $(id).disabled = !opis || !!S.praca;
+      $(id).title = opis ? `${nazwa}: ${opis} (${skrot})` : `${nazwa} (${skrot})`;
+    }
+  }
   async function zmien(metoda, args) {
     if (S.praca) { status("Program pracuje – poczekaj na zakończenie."); return; }
     try {
@@ -264,6 +320,7 @@
     renderMapa(dopasuj);
     odswiezKarte();
     renderKroki();
+    renderCofnij();
     sprawdzTolerancje();
   }
   function renderPodsumowanie() {
@@ -683,7 +740,7 @@
       el("div", { class: "rzad" },
          el("button", { text: "Strona ODA", onclick: bezpiecznie(() => rpc("otworz_strone_oda")) }),
          el("button", { text: "Wskaż program…", onclick: wskazOda }),
-         el("button", { text: "Sprawdź ponownie", onclick: bezpiecznie(async () => renderOda((await rpc("start")).oda)) })));
+         el("button", { text: "Sprawdź ponownie", onclick: bezpiecznie(async () => renderOda(await rpc("sprawdz_oda"))) })));
   }
   const wskazOda = bezpiecznie(async () => {
     let r = await rpc("wskaz_oda");
@@ -827,13 +884,30 @@
     });
     $("#szukaj").addEventListener("keydown", (e) => { if (e.key === "Enter") szukaj(); });
     $("#dopasuj").addEventListener("click", dopasujWidok);
-    $("#warstwy-przycisk").addEventListener("click", (e) => {
-      e.stopPropagation();
-      const m = $("#warstwy-menu");
-      m.classList.toggle("ukryte");
-      $("#warstwy-przycisk").setAttribute("aria-expanded", String(!m.classList.contains("ukryte")));
+    $("#warstwy-przycisk").addEventListener("click", (e) => { e.stopPropagation(); przelaczMenu(e.currentTarget, $("#warstwy-menu")); });
+    $("#ostatnie-przycisk").addEventListener("click", (e) => { e.stopPropagation(); przelaczMenu(e.currentTarget, $("#ostatnie-menu")); });
+    document.addEventListener("click", (e) => { if (!e.target.closest(".rozwijane")) zamknijMenu(); });
+    $("#cofnij").addEventListener("click", () => cofnijLubPonow("cofnij"));
+    $("#ponow").addEventListener("click", () => cofnijLubPonow("ponow"));
+    document.addEventListener("keydown", (e) => {
+      if (!(e.ctrlKey || e.metaKey) || e.altKey || !$("#okno").classList.contains("ukryte")) return;
+      // w polach tekstowych Ctrl+Z cofa wpisywany tekst, nie zmiany w projekcie
+      if (e.target.closest("input:not([type=checkbox]):not([type=radio]), textarea, select, " +
+                           "[contenteditable]:not([contenteditable=false])")) return;
+      const k = e.key.toLowerCase();
+      if (k === "z" && !e.shiftKey) { e.preventDefault(); cofnijLubPonow("cofnij"); }
+      else if (k === "y" || (k === "z" && e.shiftKey)) { e.preventDefault(); cofnijLubPonow("ponow"); }
     });
-    document.addEventListener("click", (e) => { if (!e.target.closest(".rozwijane")) $("#warstwy-menu").classList.add("ukryte"); });
+    $("#zmiana-analizuj").addEventListener("click", () => {
+      if (!S.dane) return;
+      $("#plik").value = S.dane.plik;
+      analizuj();
+    });
+    $("#zmiana-pomin").addEventListener("click", bezpiecznie(async () => {
+      await rpc("pomin_zmiane_pliku");
+      pokazZmianePliku(false);
+    }));
+    $("#aktualizacja").addEventListener("click", bezpiecznie(() => rpc("otworz_strone_aktualizacji")));
     $$('input[name="tlo"]').forEach((r) => r.addEventListener("change", () => { pamiec.zapisz("tlo", r.value); ustawTlo(); }));
     $$("[data-warstwa]").forEach((c) => c.addEventListener("change", () => {
       pamiec.zapisz("nakladki", Object.fromEntries($$("[data-warstwa]").map((x) => [x.dataset.warstwa, x.checked])));
@@ -873,6 +947,9 @@
     $("#dziennik").textContent = st.dziennik.length ? st.dziennik.join("\n") + "\n" : "";
     wypelnijListy(st.slowniki, u.operator, u.rejon);
     $("#plik").value = st.ostatni_plik || "";
+    renderOstatnie(st.ostatnie || []);
+    $(".logo").title = `Generator WT – ${st.wersja}`;
+    if (st.aktualizacja) pokazAktualizacje(st.aktualizacja);
     $("#opracowal").value = u.opracowal || "";
     $("#umowa-od").value = dataISO(st.dzis);
     $("#data-rysunku").value = st.miesiac;
@@ -889,6 +966,8 @@
     else renderKroki();
     if (st.praca) ustawPrace(st.praca);
     petla();
+    document.body.dataset.gotowy = "1";  // dla autotestu spakowanego programu
+    if (st.plik_startowy) window.wtOtworzPlik(st.plik_startowy);
   }
   start();
 })();

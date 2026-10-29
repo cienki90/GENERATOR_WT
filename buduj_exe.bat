@@ -9,6 +9,8 @@ if errorlevel 1 (
   exit /b 1
 )
 pyinstaller --noconfirm --windowed --name "Generator WT" --collect-all pyproj --collect-all pymupdf --collect-data docx --collect-data ezdxf --collect-submodules scipy.optimize --add-data "generator_wt\web\static;generator_wt\web\static" --exclude-module matplotlib --exclude-module tkinter uruchom.pyw
+rem bez niepotrzebnych czesci Qt (QML, 3D, tlumaczenia, wersje debug) - ok. 250 MB mniej
+python przytnij_exe.py "dist\Generator WT"
 xcopy /E /I /Y szablony "dist\Generator WT\szablony"
 mkdir "dist\Generator WT\dane" 2>nul
 copy /Y dane\slowniki.xlsx "dist\Generator WT\dane\"

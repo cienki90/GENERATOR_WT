@@ -13,15 +13,24 @@ Program okienkowy, który numeruje słupy (wierzchołki polilinii warstwy `!tele
 
 Wersję `.exe` buduje się ręcznie: GitHub → Actions → „Wersja Windows (.exe)” → Run workflow. Lokalnie `buduj_exe.bat` tworzy samodzielny `dist\Generator WT\Generator WT.exe`. Na komputerze, na którym potem uruchamiasz ten plik, nie trzeba instalować Pythona.
 
+Po budowie skrypt `przytnij_exe.py` usuwa z paczki części Qt, których program nie używa (QML, 3D, wykresy, multimedia, tłumaczenia poza polskim i angielskim, wersje debug zasobów przeglądarki). Paczka zmniejsza się z ok. 800 do ok. 550 MB; reszta to głównie silnik przeglądarki (Qt WebEngine, ok. 200 MB). `"Generator WT.exe" --autotest` sprawdza przyciętą paczkę, łącznie z otwarciem okna z mapą.
+
+Program z GitHuba (paczka z Releases) przy starcie sprawdza, czy w Releases jest nowsza wersja. Jeśli tak, w górnym pasku pojawia się przycisk „Dostępna nowa wersja”, który otwiera stronę pobierania. Program uruchomiony ze źródeł tego nie sprawdza.
+
 ### Format DWG i DXF
 
 Domyślnym formatem rysunków jest DWG: program otwiera projekty DWG i DXF, a numerację i plan orientacyjny zapisuje jako DWG (wersja jak rysunek źródłowy). W „Wyniki” można przełączyć zapis na DXF.
 
-Do obsługi DWG potrzebny jest darmowy program **ODA File Converter** (https://www.opendesign.com/guestfiles/oda_file_converter). Każdy użytkownik instaluje go sam – licencja ODA nie pozwala dołączyć go do paczki programu. Program szuka go w `C:\Program Files\ODA\ODAFileConverter*`; gdy jest gdzie indziej, wskaż go przyciskiem „Wskaż program…”. Bez ODA program działa na plikach DXF i proponuje zapis wyników jako DXF.
+Do obsługi DWG potrzebny jest darmowy program **ODA File Converter** (https://www.opendesign.com/guestfiles/oda_file_converter). Każdy użytkownik instaluje go sam – licencja ODA nie pozwala dołączyć go do paczki programu. Program szuka go sam: w `Program Files\ODA`, w `PATH` i w folderach z „oda” w nazwie na dyskach lokalnych (np. `D:\programy\oda`). Gdy go nie znajdzie, wskaż go przyciskiem „Wskaż program…”. Bez ODA program działa na plikach DXF i proponuje zapis wyników jako DXF.
 
 ## Okno programu
 
 Okno ma interfejs webowy wyświetlany przez Qt WebEngine. Lewy panel zawiera kroki pracy (projekt, zlecenie, numeracja, wyniki), środek mapę OpenLayers w układzie PL-2000 projektu z wykazem słupów, prawy panel „Do sprawdzenia”. Kliknięcie pozycji w „Do sprawdzenia” przybliża mapę do słupa lub przęsła. Na mapie możesz przełączać podkład (OpenStreetMap, ortofotomapa, mapa topograficzna GUGiK) i nakładki (działki i budynki EGiB, sieci GESUT, strefy trafo, arkusze, numery). Jest jasny i ciemny motyw (przycisk ◐).
+
+Ułatwienia:
+- **Otwieranie rysunku:** przycisk „Wybierz…”, lista ostatnich projektów (▾ obok), przeciągnięcie pliku DWG/DXF na okno albo na ikonę programu (`"Generator WT.exe" projekt.dwg`).
+- **Zmiany w CAD:** gdy zapiszesz otwarty rysunek w programie CAD, nad mapą pojawia się pytanie o ponowną analizę. Ręczne poprawki z wykazu zostają (są w pliku `.wt.json`).
+- **Cofnij / Ponów:** przyciski ↶ ↷ nad mapą albo Ctrl+Z / Ctrl+Y cofają ręczne zmiany: poprawki w wykazie, wyłączanie słupów i „Przyjmij ulice z dróg”. Historia obejmuje 50 ostatnich zmian i zaczyna się od nowa przy każdej analizie.
 
 - `uruchom.pyw --qt` uruchamia poprzednie okno (Qt Widgets). Program przechodzi na nie sam, gdy Qt WebEngine nie jest dostępne.
 - `python -m generator_wt.web --przegladarka` uruchamia sam serwer i wypisuje adres do otwarcia w przeglądarce (do testów; zamiast okien wyboru pliku wpisujesz ścieżki).

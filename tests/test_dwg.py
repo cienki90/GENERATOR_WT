@@ -24,7 +24,7 @@ def _przywroc_opcje_ezdxf():
 
 @pytest.fixture
 def bez_oda(monkeypatch):
-    monkeypatch.setattr(dwg, "znajdz_oda", lambda wskazana=None: None)
+    monkeypatch.setattr(dwg, "znajdz_oda", lambda wskazana=None, odswiez=False: None)
 
 
 @pytest.fixture
@@ -42,7 +42,7 @@ def atrapa_oda(monkeypatch, tmp_path):
         wywolania["zapis"].append(plik)
         doc.saveas(plik)
 
-    monkeypatch.setattr(dwg, "znajdz_oda", lambda wskazana=None: str(exe))
+    monkeypatch.setattr(dwg, "znajdz_oda", lambda wskazana=None, odswiez=False: str(exe))
     monkeypatch.setattr(odafc, "readfile", odczyt)
     monkeypatch.setattr(odafc, "export_dwg", zapis)
     return wywolania

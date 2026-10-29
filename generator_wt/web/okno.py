@@ -2,16 +2,21 @@
 
 Okna wyboru pliku/folderu są natywne (Qt) - API wywołuje je z wątku serwera, a one
 wykonują się w wątku okna (połączenie blokujące), bo Qt pozwala na okna tylko tam.
+
+Rysunek można otworzyć, upuszczając go na okno albo na ikonę programu (ścieżka
+w wierszu poleceń: "Generator WT.exe" projekt.dwg).
 """
 from __future__ import annotations
 
+import json
 import sys
+from pathlib import Path
 
-from PySide6.QtCore import QObject, QThread, QUrl, Qt, Signal, Slot
+from PySide6.QtCore import QEvent, QObject, QThread, QUrl, Qt, Signal, Slot
 from PySide6.QtGui import QDesktopServices
 from PySide6.QtWebEngineCore import QWebEnginePage, QWebEngineSettings
 from PySide6.QtWebEngineWidgets import QWebEngineView
-from PySide6.QtWidgets import QApplication, QFileDialog, QMainWindow, QMessageBox
+from PySide6.QtWidgets import QApplication, QFileDialog, QMainWindow, QMessageBox, QWidget
 
 from .api import Api
 from .serwer import Serwer
@@ -77,14 +82,46 @@ class _Strona(QWebEnginePage):
         return strona
 
 
+def _rysunek(mime) -> str | None:
+    """Ścieżka pierwszego przeciąganego pliku DWG/DXF albo None."""
+    for url in mime.urls() if mime.hasUrls() else []:
+        p = url.toLocalFile()
+        if p and Path(p).suffix.lower() in (".dwg", ".dxf"):
+            return str(Path(p))  # ukośniki jak w Windows
+    return None
+
+
+class _Upuszczanie(QObject):
+    """Przeciąganie rysunku na okno. Filtr na całej aplikacji, bo widok strony
+    (Chromium) przejmuje zdarzenia przeciągania, zanim dotrą do okna."""
+
+    def __init__(self, okno: "OknoWeb"):
+        super().__init__(okno)
+        self.okno = okno
+
+    def eventFilter(self, obj, ev):
+        typ = ev.type()
+        if typ in (QEvent.DragEnter, QEvent.DragMove, QEvent.Drop) and                 isinstance(obj, QWidget) and obj.window() is self.okno:
+            plik = _rysunek(ev.mimeData())
+            if plik is None:
+                return False
+            ev.setDropAction(Qt.CopyAction)
+            ev.accept()
+            if typ == QEvent.Drop:
+                self.okno.otworz(plik)
+            return True
+        return False
+
+
 class OknoWeb(QMainWindow):
-    def __init__(self):
+    def __init__(self, plik: str | None = None):
         super().__init__()
         self.setWindowTitle("Generator WT")
         self.resize(1500, 920)
         self.setMinimumSize(1100, 700)
         self.dialogi = Dialogi(self)
         self.api = Api(dialogi=self.dialogi)
+        self.api.plik_startowy = plik
         self.serwer = Serwer(self.api).start()
         self.widok = QWebEngineView(self)
         strona = _Strona(self.widok)
@@ -94,6 +131,14 @@ class OknoWeb(QMainWindow):
         ust.setAttribute(QWebEngineSettings.JavascriptCanOpenWindows, False)
         self.setCentralWidget(self.widok)
         self.widok.load(QUrl(self.serwer.adres))
+        self._upuszczanie = _Upuszczanie(self)
+        QApplication.instance().installEventFilter(self._upuszczanie)
+
+    def otworz(self, plik: str) -> None:
+        """Rysunek upuszczony na okno - interfejs wpisuje ścieżkę i uruchamia analizę."""
+        self.raise_()
+        self.activateWindow()
+        self.widok.page().runJavaScript(f"window.wtOtworzPlik && window.wtOtworzPlik({json.dumps(plik)})")
 
     def closeEvent(self, ev):
         if self.api.zajety():
@@ -102,15 +147,19 @@ class OknoWeb(QMainWindow):
                                     "Poczekaj na zakończenie i zamknij okno ponownie.")
             ev.ignore()
             return
+        QApplication.instance().removeEventFilter(self._upuszczanie)
         self.serwer.stop()
         super().closeEvent(ev)
 
 
-def main() -> int:
+def main(argv: list[str] | None = None) -> int:
+    argv = sys.argv if argv is None else argv
     QApplication.setAttribute(Qt.AA_ShareOpenGLContexts)  # wymagane przez Qt WebEngine
-    app = QApplication.instance() or QApplication(sys.argv)
+    app = QApplication.instance() or QApplication(argv)
     app.setApplicationName("Generator WT")
-    okno = OknoWeb()
+    plik = next((a for a in argv[1:] if Path(a).suffix.lower() in (".dwg", ".dxf")
+                 and Path(a).is_file()), None)
+    okno = OknoWeb(plik)
     okno.show()
     kod = app.exec()
     # okno usuwane jawnie przed aplikacją (patrz gui.main) - bez losowego "Aborted" przy wyjściu

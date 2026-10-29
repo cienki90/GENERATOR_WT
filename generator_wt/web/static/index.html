@@ -17,6 +17,7 @@
     <button data-krok="zlecenie" class="krok"><span>3</span>Zlecenie</button>
     <button data-krok="wyniki" class="krok"><span>4</span>Generuj</button>
   </nav>
+  <button class="nowa-wersja ukryte" id="aktualizacja">Dostępna nowa wersja</button>
   <button class="ikona" id="motyw" title="Jasny / ciemny motyw" aria-label="Zmień motyw">◐</button>
   <span class="logo-mmui" role="img" aria-label="MMUI VibeCoding" title="MMUI VibeCoding"></span>
 </header>
@@ -29,6 +30,10 @@
         <div class="rzad">
           <input id="plik" type="text" placeholder="C:\projekty\trasa.dwg" spellcheck="false">
           <button id="wybierz-plik">Wybierz…</button>
+          <div class="rozwijane ukryte" id="ostatnie">
+            <button id="ostatnie-przycisk" title="Ostatnie projekty" aria-label="Ostatnie projekty" aria-expanded="false">▾</button>
+            <div class="menu menu-prawe ukryte" id="ostatnie-menu"></div>
+          </div>
         </div>
       </label>
       <label class="check"><input type="checkbox" id="geo" checked> Pobieraj adresy z GUGiK i sprawdzaj ulice</label>
@@ -106,10 +111,13 @@
       <div class="pusta-mapa" id="pusta-mapa">
         <p class="duzy-tekst">Wybierz rysunek projektu (DWG lub DXF)</p>
         <p>Po analizie zobaczysz tu trasę, słupy z numeracją i arkusze.</p>
+        <p>Rysunek możesz też przeciągnąć na okno programu.</p>
       </div>
       <div class="narzedzia-mapy">
         <input id="szukaj" type="search" placeholder="Szukaj słupa: nr lub 05-0743/9.1">
         <button id="dopasuj" title="Pokaż całą trasę">Cała trasa</button>
+        <button id="cofnij" disabled title="Cofnij (Ctrl+Z)" aria-label="Cofnij">↶</button>
+        <button id="ponow" disabled title="Ponów (Ctrl+Y)" aria-label="Ponów">↷</button>
         <div class="rozwijane">
           <button id="warstwy-przycisk" aria-expanded="false">Warstwy ▾</button>
           <div class="menu ukryte" id="warstwy-menu">
@@ -128,8 +136,13 @@
         </div>
       </div>
       <div class="ladowanie ukryte" id="ladowanie" role="status"></div>
+      <div class="baner ukryte" id="zmiana-pliku" role="alert">
+        <span id="zmiana-pliku-tekst">Rysunek zmienił się na dysku.</span>
+        <button class="glowny" id="zmiana-analizuj">Analizuj ponownie</button>
+        <button id="zmiana-pomin">Pomiń</button>
+      </div>
       <div class="karta-slupa ukryte" id="karta-slupa"></div>
-      <div class="podpowiedz">Klik – zaznacz · podwójny klik – wyłącz/włącz słup · kółko – zoom</div>
+      <div class="podpowiedz">Klik – zaznacz · podwójny klik – wyłącz/włącz słup · kółko – zoom · Ctrl+Z – cofnij</div>
     </div>
 
     <div class="dolny" id="dolny">

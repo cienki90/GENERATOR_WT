@@ -142,5 +142,6 @@ def test_generowanie_w_tle(app, okno, dxf, komunikaty):
     assert okno.zajety()
     czekaj(app, okno)
     assert komunikaty[-1][:2] == ("information", "Gotowe")
-    assert (dxf.parent / "projekt_numeracja.dxf").exists()
+    # DWG, gdy na komputerze jest ODA File Converter, inaczej DXF
+    assert any((dxf.parent / f"projekt_numeracja.{f}").exists() for f in ("dwg", "dxf"))
     assert (dxf.parent / "projekt_tabela_projektowa.xlsx").exists()

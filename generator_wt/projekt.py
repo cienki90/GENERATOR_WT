@@ -11,6 +11,7 @@ Kolejność pracy:
 """
 from __future__ import annotations
 
+import copy
 import math
 from pathlib import Path
 
@@ -155,6 +156,22 @@ class Projekt:
             self.ostrzezenia.append(
                 f"{len(self.poprawek_niedopasowanych)} zapamiętanych poprawek "
                 f"({self.plik_stanu.name}) nie pasuje do żadnego słupa – rysunek się zmienił.")
+
+    def migawka(self) -> dict:
+        """Ręcznie zmieniane dane słupów (poprawki, wykluczenia) - do cofania zmian."""
+        pola = (*stan.POLA_RECZNE, "wykluczony", "ulica_zgodna")
+        return {"slupy": [{a: getattr(w, a) for a in pola} for w in self.slupy],
+                "stan": copy.deepcopy(self.stan["slupy"])}
+
+    def przywroc(self, m: dict) -> None:
+        """Przywraca migawkę i zapisuje plik stanu. Potem trzeba przypisać rejony."""
+        for w, wart in zip(self.slupy, m["slupy"]):
+            for a, v in wart.items():
+                setattr(w, a, v)
+        self.stan["slupy"] = copy.deepcopy(m["stan"])
+        self.planuj()
+        self.odswiez_miejscowosci_arkuszy()
+        self.zapisz_stan()
 
     def ustawienia_stanu(self) -> dict:
         return dict(self.stan.get("ustawienia") or {})
