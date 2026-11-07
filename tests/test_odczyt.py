@@ -1,6 +1,8 @@
 """Odczyt DXF: słupy, scalanie błędnych klików, strefy trafo, opisy, układ współrzędnych."""
 import ezdxf
 import pytest
+from ezdxf.math import Vec2
+from ezdxf.render import mleader
 
 from generator_wt import reader
 from generator_wt.config import Config
@@ -86,3 +88,77 @@ def test_nazwa_stacji(tekst, nazwa):
 
 def test_czysty_tekst_mtext():
     assert reader._czysty_tekst("{\\fArial|b1;słup nN}\\PP-10/ZN") == "słup nN\nP-10/ZN"
+
+
+# ---------------------------------------------------------------- opisy słupów w blokach
+
+def _dodaj_opis(uklad, tekst, grot, wstawienie=(0, 8)):
+    """MULTILEADER 'słup nN\\\\P<typ>' z grotem w punkcie `grot`."""
+    ml = uklad.add_multileader_mtext("Standard")
+    ml.set_content(tekst)
+    ml.add_leader_line(mleader.ConnectionSide.left, [Vec2(grot)])
+    ml.build(insert=Vec2(wstawienie))
+
+
+def _plan_slupow(*punkty, tolerancja=5.0):
+    doc = _rysunek(list(punkty))
+    cfg = Config(tolerancja_slupa=tolerancja)
+    slupy, _ = reader.wczytaj_slupy(doc, cfg)
+    return doc, cfg, {(s.x, s.y): s for s in slupy}
+
+
+def test_opis_slupa_w_bloku():
+    doc, cfg, slupy = _plan_slupow((0, 0), (40, 0), (80, 0))
+    _dodaj_opis(doc.blocks.new("q"), "słup nN\\PP-10/ZN", (0, 0))
+    _dodaj_opis(doc.blocks.new("e2"), "słup SN\\P-10,5/10/E", (0, 0))
+    msp = doc.modelspace()
+    msp.add_blockref("q", (0, 0), dxfattribs={"rotation": 37})
+    msp.add_blockref("q", (40, 0))
+    msp.add_blockref("e2", (80, 0))
+    assert reader.przypisz_opisy_slupow(doc, list(slupy.values()), cfg) == 3
+    assert (slupy[(0, 0)].rodzaj_slupa, slupy[(0, 0)].typ_slupa) == ("nN", "P-10/ZN")
+    assert (slupy[(40, 0)].rodzaj_slupa, slupy[(40, 0)].typ_slupa) == ("nN", "P-10/ZN")
+    assert (slupy[(80, 0)].rodzaj_slupa, slupy[(80, 0)].typ_slupa) == ("SN", "-10,5/10/E")
+
+
+def test_opis_w_bloku_uwzglednia_obrot_skale_i_punkt_bazowy():
+    # grot 10 m od punktu bazowego bloku: po obrocie o 90° i skali 2 trafia 20 m nad wstawienie
+    doc, cfg, slupy = _plan_slupow((100, 120), (100, 60), tolerancja=0.5)
+    blok = doc.blocks.new("q", base_point=(5, 0))
+    _dodaj_opis(blok, "słup nN\\PP-10/ZN", (15, 0))
+    doc.modelspace().add_blockref("q", (100, 100), dxfattribs={"rotation": 90, "xscale": 2, "yscale": 2})
+    assert reader.przypisz_opisy_slupow(doc, list(slupy.values()), cfg) == 1
+    assert slupy[(100, 120)].typ_slupa == "P-10/ZN"
+    assert slupy[(100, 60)].typ_slupa is None
+
+
+def test_opis_w_bloku_jako_mtext():
+    doc, cfg, slupy = _plan_slupow((0, 0), (40, 0))
+    doc.blocks.new("t").add_mtext("słup nN\\PK-10,5/10/E", dxfattribs={"insert": (0, 0)})
+    doc.modelspace().add_blockref("t", (40, 0))
+    assert reader.przypisz_opisy_slupow(doc, list(slupy.values()), cfg) == 1
+    assert slupy[(40, 0)].typ_slupa == "K-10,5/10/E"
+
+
+def test_multileader_z_modelu_wygrywa_z_blokiem():
+    doc, cfg, slupy = _plan_slupow((0, 0), (40, 0))
+    _dodaj_opis(doc.blocks.new("q"), "słup nN\\PP-10/ZN", (0, 0))
+    msp = doc.modelspace()
+    msp.add_blockref("q", (0, 0))
+    _dodaj_opis(msp, "słup nN\\PRPK-10,5/10/E", (0, 0))
+    assert reader.przypisz_opisy_slupow(doc, list(slupy.values()), cfg) == 1      # jeden słup, dwa opisy
+    assert slupy[(0, 0)].typ_slupa == "RPK-10,5/10/E"
+    assert slupy[(40, 0)].typ_slupa is None
+
+
+def test_inne_bloki_i_blok_daleko_od_slupa_nie_daja_opisu():
+    doc, cfg, slupy = _plan_slupow((0, 0), (40, 0))
+    doc.blocks.new("znak").add_line((0, 0), (1, 1))
+    _dodaj_opis(doc.blocks.new("q"), "słup nN\\PP-10/ZN", (0, 0))
+    _dodaj_opis(doc.blocks.new("stacja"), "STACJA TRAFO\\P05-0001", (0, 0))
+    msp = doc.modelspace()
+    msp.add_blockref("znak", (0, 0))
+    msp.add_blockref("stacja", (0, 0))
+    msp.add_blockref("q", (500, 500))
+    assert reader.przypisz_opisy_slupow(doc, list(slupy.values()), cfg) == 0
+    assert all(s.typ_slupa is None and s.rodzaj_slupa is None for s in slupy.values())
