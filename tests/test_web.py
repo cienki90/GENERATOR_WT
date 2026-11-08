@@ -39,7 +39,7 @@ def test_analiza_i_dane(api, dxf):
     assert d["podsumowanie"]["plan"] == 151
     assert all(len(k) == 2 for k in d["krawedzie"])
     sekcje = {s["id"]: s for s in d["kontrola"]}
-    assert sekcje["przesla"]["poziom"] == "blad" and len(sekcje["przesla"]["pozycje"]) == 16
+    assert sekcje["przesla"]["poziom"] == "blad" and len(sekcje["przesla"]["pozycje"]) == 52   # > 50 m
     assert len(sekcje["kliki"]["pozycje"]) == 2
     json.dumps(d)  # całość musi dać się wysłać jako JSON
     typy = [z["typ"] for z in api.zdarzenia(0)["zdarzenia"]]

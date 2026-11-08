@@ -60,7 +60,19 @@ Ułatwienia:
 
 ### Kontrola przęseł
 
-W zakładce „Kontrola projektu” są wymienione przęsła dłuższe niż 55 m. Te powyżej 60 m są oznaczone na czerwono.
+W zakładce „Kontrola projektu” są wymienione przęsła dłuższe niż 50 m. Te powyżej 60 m są oznaczone na czerwono.
+
+### Uwagi na rysunku numeracji (warstwa `WT_uwagi`)
+
+W pliku `*_numeracja` program rysuje okręgi (promień 5 m) z krótkim podpisem w miejscach do sprawdzenia. Warstwa `WT_uwagi` jest niedrukowalna, ma grubość 1,00 mm i jest zamrożona w rzutniach arkuszy, więc nie trafia na wydruki ani do PDF. Kolor okręgu mówi, czego dotyczy uwaga:
+
+| Kolor | Uwaga |
+|---|---|
+| fioletowy (6) | scalone wierzchołki (błędny klik) |
+| pomarańczowy (30) | przęsło 50–60 m |
+| czerwony (1) | przęsło powyżej 60 m |
+| błękitny (4) | słup: brak numeru w sieci lub opisu rodzaju/typu (gdy większość słupów je ma), ulica z adresu inna niż droga przy słupie, błąd geokodowania |
+| zielony (3) | stacja: numer stacji poza obrysem `!trafo`, obrys bez numeru stacji |
 
 ### Arkusze 1:1000 (w pliku `*_numeracja.dxf`)
 

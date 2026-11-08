@@ -1,4 +1,6 @@
 """Pliki wyników: DXF z numeracją i arkuszami, PDF, pismo, zestawienia, wiersz poleceń."""
+import collections
+
 import docx
 import ezdxf
 import pytest
@@ -40,6 +42,58 @@ def test_dxf_ponowny_zapis_zastepuje_numeracje(dxf):
     warstwa = p.cfg.warstwa_numeracji
     assert len(ezdxf.readfile(cel).modelspace().query(f'LEADER[layer=="{warstwa}"]')) \
         == len(p.plan)
+
+
+def test_uwagi_na_warstwie_niedrukowalnej(dxf):
+    p = nowy_projekt(dxf, arkusze=True)
+    cel = dxf.with_name("projekt_numeracja.dxf")
+    p.zapisz_dxf(cel, True)
+    p.zapisz_dxf(cel, True)                       # ponowny zapis - bez dublowania okręgów
+    doc = ezdxf.readfile(cel)
+    w = p.cfg.warstwa_uwag
+    lay = doc.layers.get(w)
+    assert lay.dxf.plot == 0 and lay.dxf.lineweight == 100          # niedrukowalna, 1.00 mm
+    kola = doc.modelspace().query(f'CIRCLE[layer=="{w}"]')
+    assert len(kola) == len(doc.modelspace().query(f'MTEXT[layer=="{w}"]')) == p.uwag_na_rysunku
+    kolory = collections.Counter(k.dxf.color for k in kola)
+    dlugie = p.przesla()
+    assert dlugie and all(d > 50 for d, _, _ in dlugie)
+    assert kolory[p.KOLOR_SCALENIA] == len(p.bledne_kliki) == 2
+    assert kolory[p.KOLOR_PRZESLA_BLAD] == sum(1 for d, _, _ in dlugie if d > 60) > 0
+    assert kolory[p.KOLOR_PRZESLA] == sum(1 for d, _, _ in dlugie if d <= 60) > 0
+    # w rzutniach arkuszy warstwa jest zamrożona - okręgi nie trafiają do arkuszy ani do PDF
+    rzutnie = [vp for n in doc.layouts.names() if n.isdigit()
+               for vp in doc.layouts.get(n).viewports() if vp.dxf.id > 1]
+    assert rzutnie and all(w in vp.frozen_layers for vp in rzutnie)
+    # oryginał bez zmian
+    assert w not in ezdxf.readfile(dxf).layers
+
+
+def test_uwagi_przesla_scalenia_i_stacja_poza_obrysem(tmp_path):
+    from generator_wt.config import Config
+    from generator_wt.projekt import Projekt
+    doc = ezdxf.new()
+    msp = doc.modelspace()
+    x0, y0 = 7_500_000.0, 5_700_000.0
+    tele = {"layer": "!tele"}
+    msp.add_lwpolyline([(x0 + x, y0) for x in (0, 45, 100, 165)], dxfattribs=tele)   # 45, 55, 65 m
+    msp.add_lwpolyline([(x0 + 165.3, y0), (x0 + 165.3, y0 + 40)], dxfattribs=tele)   # klik 0.3 m obok
+    msp.add_lwpolyline([(x0 - 10, y0 - 10), (x0 + 60, y0 - 10), (x0 + 60, y0 + 10), (x0 - 10, y0 + 10)],
+                       close=True, dxfattribs={"layer": "!trafo"})
+    msp.add_text("STACJA TRAFO 05-0001", dxfattribs={"layer": "!trafo_opis", "insert": (x0 + 80, y0 + 30)})
+    plik = tmp_path / "plan.dxf"
+    doc.saveas(plik)
+    p = Projekt(Config())
+    p.wczytaj(plik)
+    p.zastosuj_stan()
+    p.planuj()
+    uwagi = sorted((kolor, opis) for *_, opis, kolor in p.uwagi_rysunku())
+    assert [k for k, _ in uwagi] == sorted([p.KOLOR_SCALENIA, p.KOLOR_PRZESLA, p.KOLOR_PRZESLA_BLAD,
+                                            p.KOLOR_STACJI])
+    opisy = " | ".join(o for _, o in uwagi)
+    assert "przęsło 55.0 m" in opisy and "przęsło 65.0 m" in opisy and "przęsło 45" not in opisy
+    assert "scalono wierzchołki: 2 (do 0.30 m)" in opisy
+    assert "stacja 05-0001: numer 28.3 m poza obrysem !trafo" in opisy
 
 
 def test_pdf_arkuszy(dxf, operator):

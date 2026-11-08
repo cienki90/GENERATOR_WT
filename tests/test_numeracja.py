@@ -56,6 +56,7 @@ def test_zgodnosc_ze_wzorcem(dxf):
 def test_przesla(dxf):
     p = nowy_projekt(dxf)
     dlugie = p.przesla()
-    assert len(dlugie) == 16
+    assert len(dlugie) == 52                                   # > 50 m
+    assert len(p.przesla(55.0)) == 16
     assert all(d > p.cfg.przeslo_ostrzezenie for d, _, _ in dlugie)
     assert [d for d, _, _ in dlugie] == sorted((d for d, _, _ in dlugie), reverse=True)
