@@ -216,6 +216,25 @@ def test_opis_wewnatrz_innego_obrysu_nie_jest_brany_i_najblizszy_wygrywa():
     assert any("Stacja 05-0004 leży poza obrysami" in o for o in ostrz)
 
 
+def test_opis_stacji_na_innej_warstwie():
+    """Multileader „STACJA TRAFO 09-0395” wstawiony na warstwie „0” - też jest opisem stacji;
+    inne teksty spoza warstw „trafo” (sam numer, legenda bez numeru) nie są."""
+    doc = ezdxf.new()
+    msp = doc.modelspace()
+    for x0 in (0, 300, 600):
+        _obrys(msp, x0, 0)
+    ml = msp.add_multileader_mtext("Standard", dxfattribs={"layer": "0"})
+    ml.set_content("STACJA TRAFO\\P09-0395")
+    ml.add_leader_line(mleader.ConnectionSide.left, [Vec2(50, 50)])
+    ml.build(insert=Vec2(60, 60))
+    msp.add_text("05-0792", dxfattribs={"layer": "0", "insert": (350, 50)})
+    msp.add_text("STACJA TRAFO", dxfattribs={"layer": "legenda", "insert": (650, 50)})
+    strefy, _ = reader.wczytaj_stacje_trafo(doc, Config())
+    nazwy = sorted(s.nazwa for s in strefy)
+    assert "09-0395" in nazwy
+    assert "05-0792" not in nazwy and sum(n.startswith("TRAFO ?") for n in nazwy) == 2
+
+
 def test_obrys_ze_stacja_w_srodku_bez_zmian():
     doc = ezdxf.new()
     msp = doc.modelspace()
