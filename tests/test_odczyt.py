@@ -162,3 +162,66 @@ def test_inne_bloki_i_blok_daleko_od_slupa_nie_daja_opisu():
     msp.add_blockref("q", (500, 500))
     assert reader.przypisz_opisy_slupow(doc, list(slupy.values()), cfg) == 0
     assert all(s.typ_slupa is None and s.rodzaj_slupa is None for s in slupy.values())
+
+
+# ---------------------------------------------------------------- numer stacji poza obrysem
+
+def _obrys(msp, x0, y0, bok=100):
+    msp.add_lwpolyline([(x0, y0), (x0 + bok, y0), (x0 + bok, y0 + bok), (x0, y0 + bok)],
+                       close=True, dxfattribs={"layer": "!trafo"})
+
+
+def _stacja(msp, nazwa, xy):
+    msp.add_text(f"STACJA TRAFO {nazwa}", dxfattribs={"layer": "!trafo_opis", "insert": xy})
+
+
+def test_numer_stacji_tuz_za_obrysem_z_ostrzezeniem():
+    doc = ezdxf.new()
+    msp = doc.modelspace()
+    _obrys(msp, 0, 0)
+    _stacja(msp, "05-0001", (130, 50))                   # 30 m za obrysem
+    strefy, ostrz = reader.wczytaj_stacje_trafo(doc, Config())
+    assert [s.nazwa for s in strefy] == ["05-0001"]
+    assert len(ostrz) == 1
+    assert "Stacja 05-0001: w obrysie !trafo" in ostrz[0] and "30.0 m poza obrysem" in ostrz[0]
+    assert "leży poza obrysami" not in " ".join(ostrz)
+
+
+def test_numer_stacji_dalej_niz_50_m_nie_jest_brany():
+    doc = ezdxf.new()
+    msp = doc.modelspace()
+    _obrys(msp, 0, 0)
+    _stacja(msp, "05-0001", (160, 50))                   # 60 m za obrysem
+    strefy, ostrz = reader.wczytaj_stacje_trafo(doc, Config())
+    assert [s.nazwa for s in strefy] == [f"TRAFO ? ({msp[0].dxf.handle})"]
+    assert any("nie zawiera opisu stacji" in o for o in ostrz)
+    assert any("Stacja 05-0001 leży poza obrysami" in o for o in ostrz)
+    strefy, _ = reader.wczytaj_stacje_trafo(doc, Config(odl_opisu_stacji=70))
+    assert [s.nazwa for s in strefy] == ["05-0001"]
+
+
+def test_opis_wewnatrz_innego_obrysu_nie_jest_brany_i_najblizszy_wygrywa():
+    doc = ezdxf.new()
+    msp = doc.modelspace()
+    _obrys(msp, 0, 0)                                    # A: bez numeru w środku
+    _obrys(msp, 120, 0)                                  # B: ma własny numer w środku (20 m od A)
+    _stacja(msp, "05-0002", (150, 50))
+    _obrys(msp, 0, 300)                                  # C: bez numeru, dwa opisy za obrysem
+    _stacja(msp, "05-0003", (-10, 350))                  # 10 m
+    _stacja(msp, "05-0004", (-40, 350))                  # 40 m
+    strefy, ostrz = reader.wczytaj_stacje_trafo(doc, Config())
+    nazwy = sorted(s.nazwa for s in strefy)
+    assert "05-0002" in nazwy and "05-0003" in nazwy and "05-0004" not in nazwy
+    assert any(n.startswith("TRAFO ?") for n in nazwy)  # A nie dostaje numeru stacji B
+    assert any("Stacja 05-0004 leży poza obrysami" in o for o in ostrz)
+
+
+def test_obrys_ze_stacja_w_srodku_bez_zmian():
+    doc = ezdxf.new()
+    msp = doc.modelspace()
+    _obrys(msp, 0, 0)
+    _stacja(msp, "05-0001", (50, 50))
+    _stacja(msp, "05-0009", (120, 50))                   # opis poza obrysem nie zmienia nazwy
+    strefy, ostrz = reader.wczytaj_stacje_trafo(doc, Config())
+    assert [s.nazwa for s in strefy] == ["05-0001"]
+    assert ostrz == ["Stacja 05-0009 leży poza obrysami !trafo."]
