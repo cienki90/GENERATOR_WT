@@ -153,6 +153,8 @@
     return {
       prefiks: $("#prefiks").value.trim(), numer_startowy: parseInt($("#numer-startowy").value, 10) || 0,
       tolerancja_slupa: parseFloat($("#tolerancja").value) || 5, zakladka: parseFloat($("#zakladka").value) || 0,
+      przeslo_ostrzezenie: parseFloat($("#przeslo-ostrzezenie").value) || 50, przeslo_blad: parseFloat($("#przeslo-blad").value) || 60,
+      odl_opisu_stacji: Math.max(0, parseFloat($("#odl-opisu-stacji").value) || 0), promien_uwagi: parseFloat($("#promien-uwagi").value) || 5,
       inteligentny_kierunek: $("#kierunek").checked, operator: $("#operator").value, rejon: $("#rejon").value,
       umowa_od: dataPL($("#umowa-od").value), umowa_do: $("#umowa-do").value.trim(),
     };
@@ -163,6 +165,10 @@
     if ("numer_startowy" in u) $("#numer-startowy").value = u.numer_startowy;
     if ("tolerancja_slupa" in u) $("#tolerancja").value = u.tolerancja_slupa;
     if ("zakladka" in u) $("#zakladka").value = u.zakladka;
+    if ("przeslo_ostrzezenie" in u) $("#przeslo-ostrzezenie").value = u.przeslo_ostrzezenie;
+    if ("przeslo_blad" in u) $("#przeslo-blad").value = u.przeslo_blad;
+    if ("odl_opisu_stacji" in u) $("#odl-opisu-stacji").value = u.odl_opisu_stacji;
+    if ("promien_uwagi" in u) $("#promien-uwagi").value = u.promien_uwagi;
     if ("inteligentny_kierunek" in u) $("#kierunek").checked = !!u.inteligentny_kierunek;
     if (u.operator && [...$("#operator").options].some((o) => o.value === u.operator)) $("#operator").value = u.operator;
     if (u.rejon && [...$("#rejon").options].some((o) => o.value === u.rejon)) $("#rejon").value = u.rejon;
@@ -955,6 +961,10 @@
     $("#data-rysunku").value = st.miesiac;
     $("#tolerancja").value = st.domyslne.tolerancja_slupa;
     $("#zakladka").value = st.domyslne.zakladka;
+    $("#przeslo-ostrzezenie").value = st.domyslne.przeslo_ostrzezenie;
+    $("#przeslo-blad").value = st.domyslne.przeslo_blad;
+    $("#odl-opisu-stacji").value = st.domyslne.odl_opisu_stacji;
+    $("#promien-uwagi").value = st.domyslne.promien_uwagi;
     $("#format").value = u.format === "dxf" ? "dxf" : "dwg";
     renderOda(st.oda);
     const w = u.wyniki || pamiec.czytaj("wyniki", null);

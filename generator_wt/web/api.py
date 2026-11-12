@@ -259,7 +259,11 @@ class Api:
                 "miesiac": date.today().strftime("%m.%Y"), "praca": self._praca,
                 "projekt": self.dane() if self.projekt and not self.zajety() else None,
                 "domyslne": {"tolerancja_slupa": self.cfg.tolerancja_slupa,
-                             "zakladka": self.cfg.zakladka}}
+                             "zakladka": self.cfg.zakladka,
+                             "przeslo_ostrzezenie": self.cfg.przeslo_ostrzezenie,
+                             "przeslo_blad": self.cfg.przeslo_blad,
+                             "odl_opisu_stacji": self.cfg.odl_opisu_stacji,
+                             "promien_uwagi": self.cfg.promien_uwagi}}
 
     @staticmethod
     def _ostatnie(u: dict) -> list[str]:
@@ -336,6 +340,11 @@ class Api:
         c.numer_startowy = int(u.get("numer_startowy", c.numer_startowy))
         c.tolerancja_slupa = float(u.get("tolerancja_slupa", c.tolerancja_slupa))
         c.zakladka = float(u.get("zakladka", c.zakladka))
+        # progi kontroli i uwag na rysunku (okno: „Progi kontroli”)
+        c.przeslo_ostrzezenie = float(u.get("przeslo_ostrzezenie", c.przeslo_ostrzezenie))
+        c.przeslo_blad = max(float(u.get("przeslo_blad", c.przeslo_blad)), c.przeslo_ostrzezenie)
+        c.odl_opisu_stacji = max(0.0, float(u.get("odl_opisu_stacji", c.odl_opisu_stacji)))
+        c.promien_uwagi = max(0.5, float(u.get("promien_uwagi", c.promien_uwagi)))
         c.inteligentny_kierunek = bool(u.get("inteligentny_kierunek", c.inteligentny_kierunek))
 
     def analizuj(self, plik: str, geokodowanie: bool = True, ustawienia: dict | None = None
@@ -591,8 +600,11 @@ class Api:
         zadania = []
         if o.get("dxf"):  # "dxf" = rysunek numeracji (nazwa klucza z czasów samego DXF)
             arkusze = bool(o.get("arkusze"))
-            zadania.append((f"numeracja.{fmt}", lambda f, log, post: p.zapisz_dxf(
-                f, arkusze, operator, opracowal, data_rys)))
+            def rysunek(f, log, post):
+                p.zapisz_dxf(f, arkusze, operator, opracowal, data_rys)
+                log(f"Uwagi na rysunku: {p.uwag_na_rysunku} okręgów na niedrukowalnej warstwie "
+                    f"{self.cfg.warstwa_uwag}." if p.uwag_na_rysunku else "Uwagi na rysunku: brak.")
+            zadania.append((f"numeracja.{fmt}", rysunek))
             if arkusze and o.get("pdf_numeracji"):
                 zadania.append(("numeracja.pdf",
                                 lambda f, log, post: p.zapisz_numeracje_pdf(f, log)))
