@@ -108,6 +108,46 @@ def test_pdf_arkuszy(dxf, operator):
         assert (round(r.width * 25.4 / 72), round(r.height * 25.4 / 72)) == (420, 297)  # A3
 
 
+def test_pdf_w_procesach_identyczny_z_rysowanym_po_kolei(dxf):
+    """Strony rysowane w procesach pomocniczych są takie same jak rysowane po kolei - także przy
+    pierwszym eksporcie (pogrubiony styl numerów musi istnieć, zanim powstanie kontekst rysowania)."""
+    import pymupdf
+    from generator_wt import pdf as wtpdf
+    assert wtpdf.liczba_procesow(3) == 1 and wtpdf.liczba_procesow(16, 4) == 4 and wtpdf.liczba_procesow(2, 8) == 2
+    p = nowy_projekt(dxf, arkusze=True)
+    p.zapisz_dxf(dxf.with_name("projekt_numeracja.dxf"), True)
+    nazwa_dokumentu = p.doc.filename
+    nazwy = ["1", "2", "3", "4"]
+    log = []
+    for ile in (1, 2):
+        wtpdf.eksportuj_uklady(p.doc, dxf.with_name(f"n{ile}.pdf"), nazwy,
+                               warstwa_numeracji=p.cfg.warstwa_numeracji, log=log.append, procesy=ile)
+    assert not any("nie powiodło" in x for x in log), log
+    assert sorted(log) == sorted([f"PDF: strona {n}" for n in nazwy] * 2)
+    assert p.doc.filename == nazwa_dokumentu                       # zapis kopii dla pomocników nie zmienia nazwy
+    with pymupdf.open(dxf.with_name("n1.pdf")) as a, pymupdf.open(dxf.with_name("n2.pdf")) as b:
+        assert len(a) == len(b) == 4
+        for sa, sb in zip(a, b):
+            assert sa.get_pixmap(dpi=60).samples == sb.get_pixmap(dpi=60).samples
+
+
+def test_pdf_blad_pomocnika_rysuje_po_kolei(dxf, monkeypatch):
+    import pymupdf
+    from generator_wt import pdf as wtpdf
+    p = nowy_projekt(dxf, arkusze=True)
+    p.zapisz_dxf(dxf.with_name("projekt_numeracja.dxf"), True)
+
+    def zepsuty(*a, **k):
+        raise RuntimeError("proces pomocniczy: test")
+
+    monkeypatch.setattr(wtpdf, "_strony_w_procesach", zepsuty)
+    log = []
+    assert wtpdf.eksportuj_uklady(p.doc, dxf.with_name("n.pdf"), ["1", "2"], log=log.append, procesy=2) == 2
+    assert any("rysuję po kolei" in x for x in log)
+    with pymupdf.open(dxf.with_name("n.pdf")) as pdf:
+        assert pdf.page_count == 2
+
+
 @pytest.mark.parametrize("wgs84", [False, True])
 def test_pismo(dxf, operator, wgs84):
     p = nowy_projekt(dxf, wgs84=wgs84)
