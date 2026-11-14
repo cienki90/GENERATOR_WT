@@ -613,12 +613,12 @@ class Api:
             zadania.append(("pismo.docx", lambda f, log, post: p.zapisz_pismo(
                 f, operator, od, do)))
         if o.get("rozbudowana"):
-            zadania.append(("rozbudowana.xlsx", lambda f, log, post: p.zapisz_rozbudowana(f)))
+            zadania.append(("rozbudowana.xlsx", lambda f, log, post: p.zapisz_rozbudowana(f, operator)))
         if o.get("uproszczona"):
             zadania.append(("uproszczona.xls", lambda f, log, post: p.zapisz_uproszczona(f)))
         if o.get("projektowa"):
             zadania.append(("tabela_projektowa.xlsx",
-                            lambda f, log, post: p.zapisz_projektowa(f)))
+                            lambda f, log, post: p.zapisz_projektowa(f, operator)))
         if o.get("orientacja"):
             orient = o.get("orientacja_opcje") or {}
 

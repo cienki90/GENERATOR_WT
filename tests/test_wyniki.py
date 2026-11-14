@@ -174,6 +174,24 @@ def test_zestawienie_rozbudowane(dxf):
     assert "str. 7" in ws["F3"].value  # EPSG:2178 = strefa 7
 
 
+def test_ukryta_nazwa_operatora_w_skoroszytach(dxf, operator):
+    """Tabele warunków mają nazwę operatora jako właściwość dokumentu - nie w komórkach."""
+    import zipfile
+    p = nowy_projekt(dxf)
+    nazwa = operator.get("Pełna nazwa") or operator.get("Nazwa")
+    for plik, zapis in ((dxf.with_name("r.xlsx"), p.zapisz_rozbudowana), (dxf.with_name("t.xlsx"), p.zapisz_projektowa)):
+        zapis(plik)
+        with zipfile.ZipFile(plik) as z:
+            assert "docProps/custom.xml" not in z.namelist()         # bez operatora - bez znacznika
+        zapis(plik, operator)
+        with zipfile.ZipFile(plik) as z:
+            xml = z.read("docProps/custom.xml").decode("utf-8")
+        assert 'name="GeneratorNN.firma"' in xml and nazwa.split()[0] in xml
+        wb = load_workbook(plik)                                      # skoroszyt nadal się otwiera
+        komorki = [str(c) for ws in wb.worksheets for r in ws.iter_rows(values_only=True) for c in r if c]
+        assert nazwa not in komorki
+
+
 def test_zestawienie_uproszczone(dxf):
     p = nowy_projekt(dxf)
     cel = dxf.with_name("projekt_uproszczona.xls")
